@@ -1,5 +1,5 @@
 ccxt==4.2.85
-pandas==2.1.4 --no-deps
-ta==0.10.2
+numpy==1.26.0  # Вместо pandas для базовых вычислений
+fastparquet==2023.10.1  # Для хранения данных
 requests==2.31.0
-python-dotenv==1.0.0
+python-telegram-bot==20.6  # Для управления через Telegram
