@@ -56,6 +56,11 @@ class BybitAPI:
                 except json.JSONDecodeError:
                     text = await response.text()
                     raise Exception(f"Invalid JSON response: {text}")
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                await asyncio.sleep(5)
+                return await self._request(method, endpoint, params, signed)
+            raise
         except Exception as e:
             raise Exception(f"Request failed: {str(e)}")
 
