@@ -1,68 +1,53 @@
 import sqlite3
 from contextlib import closing
 
-conn = sqlite3.connect('trade_stats.db', check_same_thread=False)
-cursor = conn.cursor()
+DB_NAME = 'trading_bot.db'
 
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    strategy TEXT,
-    pair TEXT,
-    timeframe TEXT,
-    successful_trades INTEGER,
-    failed_trades INTEGER,
-    profit REAL,
-    start_time TEXT,
-    end_time TEXT
-)
-''')
+def init_db():
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        with conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    strategy TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    entry_price REAL NOT NULL,
+                    exit_price REAL,
+                    volume REAL NOT NULL,
+                    entry_time TEXT NOT NULL,
+                    exit_time TEXT,
+                    profit REAL
+                )
+            ''')
 
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS overall_stats (
-    strategy TEXT PRIMARY KEY,
-    total_successful INTEGER,
-    total_failed INTEGER,
-    total_profit REAL
-)
-''')
-conn.commit()
+def add_trade(strategy, symbol, entry_price, volume, entry_time):
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        with conn:
+            conn.execute('''
+                INSERT INTO trades (strategy, symbol, entry_price, volume, entry_time)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (strategy, symbol, entry_price, volume, entry_time))
 
-def save_session(strategy, pair, timeframe, successful, failed, profit, start, end):
-    with closing(conn.cursor()) as cur:
-        cur.execute('''
-        INSERT INTO sessions (strategy, pair, timeframe, successful_trades, failed_trades, profit, start_time, end_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (strategy, pair, timeframe, successful, failed, profit, start, end))
-        conn.commit()
+def close_trade(trade_id, exit_price, exit_time, profit):
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        with conn:
+            conn.execute('''
+                UPDATE trades
+                SET exit_price = ?, exit_time = ?, profit = ?
+                WHERE id = ?
+            ''', (exit_price, exit_time, profit, trade_id))
 
-def update_overall(strategy, successful, failed, profit):
-    with closing(conn.cursor()) as cur:
-        cur.execute('SELECT * FROM overall_stats WHERE strategy=?', (strategy,))
-        row = cur.fetchone()
-        if row:
-            total_succ = row[1] + successful
-            total_fail = row[2] + failed
-            total_prof = row[3] + profit
-            cur.execute('''
-            UPDATE overall_stats SET total_successful=?, total_failed=?, total_profit=?
-            WHERE strategy=?
-            ''', (total_succ, total_fail, total_prof, strategy))
-        else:
-            cur.execute('''
-            INSERT INTO overall_stats (strategy, total_successful, total_failed, total_profit)
-            VALUES (?, ?, ?, ?)
-            ''', (strategy, successful, failed, profit))
-        conn.commit()
-
-def get_overall_stats(strategy):
-    with closing(conn.cursor()) as cur:
-        cur.execute('SELECT * FROM overall_stats WHERE strategy=?', (strategy,))
-        return cur.fetchone()
-
-def get_last_sessions(strategy, limit=5):
-    with closing(conn.cursor()) as cur:
-        cur.execute('''
-        SELECT * FROM sessions WHERE strategy=? ORDER BY id DESC LIMIT ?
-        ''', (strategy, limit))
+def get_open_trades():
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM trades WHERE exit_price IS NULL')
         return cur.fetchall()
+
+def get_all_trades():
+    with closing(sqlite3.connect(DB_NAME)) as conn:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM trades')
+        return cur.fetchall()
+
+# Инициализация базы при первом запуске
+init_db()
