@@ -22,6 +22,7 @@ class StrategyTwo:
         self.ema_slow = 50
         self.rsi_period = 14
         self.volume_ma_period = 20
+        self.current_trade_id: Optional[int] = None
 
     async def fetch_data(self, symbol: str, interval: str = '15m', limit: int = 100) -> pd.DataFrame:
         """Получает данные с биржи"""
@@ -115,9 +116,12 @@ class StrategyTwo:
             return
             
         if signal.action == 'buy':
-            if self.position == 'short':
-                await self.api.close_position(symbol)
+            if self.position == 'short' and self.current_trade_id:
+                await self.api.close_position(symbol, 'Buy', signal.volume)
+                close_trade(self.current_trade_id, signal.price, None)
+                log_trade_exit(self.current_trade_id, signal.price, None)
                 self.position = None
+                self.current_trade_id = None
                 
             await self.api.place_order(
                 symbol=symbol,
@@ -126,7 +130,7 @@ class StrategyTwo:
                 price=signal.price
             )
             self.position = 'long'
-            trade_id = add_trade(
+            self.current_trade_id = add_trade(
                 strategy='Strategy 2 (EMA Cross)',
                 symbol=symbol,
                 entry_price=signal.price,
@@ -135,9 +139,12 @@ class StrategyTwo:
             log_trade_entry('Strategy 2', symbol, signal.price, signal.volume)
             
         elif signal.action == 'sell':
-            if self.position == 'long':
-                await self.api.close_position(symbol)
+            if self.position == 'long' and self.current_trade_id:
+                await self.api.close_position(symbol, 'Sell', signal.volume)
+                close_trade(self.current_trade_id, signal.price, None)
+                log_trade_exit(self.current_trade_id, signal.price, None)
                 self.position = None
+                self.current_trade_id = None
                 
             await self.api.place_order(
                 symbol=symbol,
@@ -146,7 +153,7 @@ class StrategyTwo:
                 price=signal.price
             )
             self.position = 'short'
-            trade_id = add_trade(
+            self.current_trade_id = add_trade(
                 strategy='Strategy 2 (EMA Cross)',
                 symbol=symbol,
                 entry_price=signal.price,
