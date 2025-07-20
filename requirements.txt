@@ -1,12 +1,5 @@
 python-telegram-bot==20.3
+openai
 python-dotenv
-ccxt
 requests
 numpy
-pandas
-ta
-flask
-httpx
-aiohttp
-aiohappyeyeballs
-aiodns
