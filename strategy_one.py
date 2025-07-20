@@ -14,10 +14,11 @@ class TradeSignal:
     reason: str
 
 class StrategyOne:
-    def __init__(self, api: BybitAPI, risk_per_trade: float = 0.01):
+    def __init__(self, api: BybitAPI, risk_per_trade: float = 0.01, leverage: int = 5):
         self.position: Optional[str] = None
         self.api = api
         self.risk_per_trade = risk_per_trade
+        self.leverage = leverage
         self.bb_period = 20
         self.bb_std = 2
         self.rsi_period = 14
@@ -79,7 +80,7 @@ class StrategyOne:
         return df
 
     def calculate_position_size(self, price: float, balance: float) -> float:
-        risk_amount = balance * self.risk_per_trade
+        risk_amount = balance * self.risk_per_trade * self.leverage
         return risk_amount / price
 
     async def analyze(self, symbol: str, balance: float) -> TradeSignal:
@@ -161,16 +162,18 @@ class StrategyOne:
                 quantity=signal.volume,
                 price=signal.price,
                 take_profit=tp_price,
-                stop_loss=sl_price
+                stop_loss=sl_price,
+                leverage=self.leverage
             )
             self.position = 'long'
             self.current_trade_id = add_trade(
                 strategy='Strategy 1 (Bollinger)',
                 symbol=symbol,
                 entry_price=signal.price,
-                volume=signal.volume
+                volume=signal.volume,
+                leverage=self.leverage
             )
-            log_trade_entry('Strategy 1', symbol, signal.price, signal.volume)
+            log_trade_entry('Strategy 1', symbol, signal.price, signal.volume, self.leverage)
             
         elif signal.action == 'sell':
             tp_price = signal.price * 0.98  # TP -2% (для шорта)
@@ -189,13 +192,15 @@ class StrategyOne:
                 quantity=signal.volume,
                 price=signal.price,
                 take_profit=tp_price,
-                stop_loss=sl_price
+                stop_loss=sl_price,
+                leverage=self.leverage
             )
             self.position = 'short'
             self.current_trade_id = add_trade(
                 strategy='Strategy 1 (Bollinger)',
                 symbol=symbol,
                 entry_price=signal.price,
-                volume=signal.volume
+                volume=signal.volume,
+                leverage=self.leverage
             )
-            log_trade_entry('Strategy 1', symbol, signal.price, signal.volume)
+            log_trade_entry('Strategy 1', symbol, signal.price, signal.volume, self.leverage)
