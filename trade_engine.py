@@ -30,8 +30,7 @@ class TradeEngine:
         self.strategy.name = strategy_name
         self.active = True
 
-        self.thread = threading.Thread(target=self._run)
-        self.thread.daemon = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol}")
         return True
