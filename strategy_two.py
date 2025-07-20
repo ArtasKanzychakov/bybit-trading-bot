@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
 from typing import Optional, Tuple, Dict, Any
 from dataclasses import dataclass
 from trading import BybitAPI
@@ -22,6 +21,7 @@ class StrategyTwo:
         self.ema_fast = 20
         self.ema_slow = 50
         self.rsi_period = 14
+        self.volume_ma_period = 20
 
     async def fetch_data(self, symbol: str, interval: str = '15m', limit: int = 100) -> pd.DataFrame:
         """Получает данные с биржи"""
@@ -29,23 +29,28 @@ class StrategyTwo:
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume'
         ])
-        df = df.astype({
+        return df.astype({
             'open': float, 'high': float, 'low': float, 
             'close': float, 'volume': float
         })
-        return df
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Вычисляет все индикаторы для стратегии"""
         # EMA
-        df['ema_fast'] = ta.ema(df['close'], length=self.ema_fast)
-        df['ema_slow'] = ta.ema(df['close'], length=self.ema_slow)
+        df['ema_fast'] = df['close'].ewm(span=self.ema_fast, adjust=False).mean()
+        df['ema_slow'] = df['close'].ewm(span=self.ema_slow, adjust=False).mean()
         
         # RSI
-        df['rsi'] = ta.rsi(df['close'], length=self.rsi_period)
+        delta = df['close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=self.rsi_period).mean()
+        avg_loss = loss.rolling(window=self.rsi_period).mean()
+        rs = avg_gain / avg_loss
+        df['rsi'] = 100 - (100 / (1 + rs))
         
         # Volume MA
-        df['volume_ma'] = df['volume'].rolling(window=20).mean()
+        df['volume_ma'] = df['volume'].rolling(window=self.volume_ma_period).mean()
         
         return df
 
@@ -76,7 +81,7 @@ class StrategyTwo:
             if last['rsi'] > 50 and last['rsi'] <= 70 and last['volume'] > last['volume_ma']:
                 return TradeSignal(
                     'buy', price, position_size,
-                    'Golden Cross + RSI > 50 + Volume spike'
+                    'Golden Cross + RSI >50 + Volume spike'
                 )
         
         # Условия для входа в шорт
@@ -84,20 +89,20 @@ class StrategyTwo:
             if last['rsi'] < 50 and last['rsi'] >= 30 and last['volume'] > last['volume_ma']:
                 return TradeSignal(
                     'sell', price, position_size,
-                    'Death Cross + RSI < 50 + Volume spike'
+                    'Death Cross + RSI <50 + Volume spike'
                 )
         
         # Условия для выхода из позиции
         if self.position == 'long' and (death_cross or last['rsi'] > 70):
             return TradeSignal(
                 'sell', price, position_size,
-                'Death Cross or RSI > 70'
+                'Death Cross or RSI >70'
             )
             
         if self.position == 'short' and (golden_cross or last['rsi'] < 30):
             return TradeSignal(
                 'buy', price, position_size,
-                'Golden Cross or RSI < 30'
+                'Golden Cross or RSI <30'
             )
         
         return TradeSignal('hold', 0, 0, 'No trading conditions met')
@@ -122,7 +127,7 @@ class StrategyTwo:
             )
             self.position = 'long'
             trade_id = add_trade(
-                strategy='Strategy 2',
+                strategy='Strategy 2 (EMA Cross)',
                 symbol=symbol,
                 entry_price=signal.price,
                 volume=signal.volume
@@ -142,7 +147,7 @@ class StrategyTwo:
             )
             self.position = 'short'
             trade_id = add_trade(
-                strategy='Strategy 2',
+                strategy='Strategy 2 (EMA Cross)',
                 symbol=symbol,
                 entry_price=signal.price,
                 volume=signal.volume
