@@ -29,13 +29,13 @@ user_state = {}  # user_id: {strategy: ..., symbol: ...}
 
 def main_menu_keyboard():
     return ReplyKeyboardMarkup(
-        [["Начать настройку"], ["Статус"]],
+        [["Начать настройку", "Остановить торги"], ["Статус"]],
         resize_keyboard=True
     )
 
 def back_menu_keyboard():
     return ReplyKeyboardMarkup(
-        [["⬅ Назад"], ["🔝 В начало"]],
+        [["⬅ Назад"], ["🔝 В начало", "Остановить торги"]],
         resize_keyboard=True
     )
 
@@ -48,7 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Шаг 1: Выбор стратегии ----------
 async def begin_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["Стратегия 1"], ["Стратегия 2"], ["⬅ Назад", "🔝 В начало"]]
+    keyboard = [["Стратегия 1"], ["Стратегия 2"], ["⬅ Назад", "🔝 В начало", "Остановить торги"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Выберите торговую стратегию:", reply_markup=reply_markup)
     return CHOOSE_STRATEGY
@@ -57,11 +57,13 @@ async def set_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
-    if text == "⬅ Назад" or text == "🔝 В начало":
+    if text in ["⬅ Назад", "🔝 В начало"]:
         return await start(update, context)
+    if text == "Остановить торги":
+        return await stop_trading(update, context)
 
     user_state.setdefault(user_id, {})["strategy"] = text
-    keyboard = [["SOLUSDT", "BTCUSDT"], ["ETHUSDT", "XRPUSDT"], ["DOGEUSDT"], ["⬅ Назад", "🔝 В начало"]]
+    keyboard = [["SOLUSDT", "BTCUSDT"], ["ETHUSDT", "XRPUSDT"], ["DOGEUSDT"], ["⬅ Назад", "🔝 В начало", "Остановить торги"]]
     await update.message.reply_text(f"Стратегия выбрана: {text}\nТеперь выберите валютную пару:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     return CHOOSE_SYMBOL
 
@@ -74,9 +76,11 @@ async def set_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await begin_setup(update, context)
     elif text == "🔝 В начало":
         return await start(update, context)
+    elif text == "Остановить торги":
+        return await stop_trading(update, context)
 
     user_state.setdefault(user_id, {})["symbol"] = text
-    keyboard = [["🚀 Запустить торговлю"], ["⬅ Назад", "🔝 В начало"]]
+    keyboard = [["🚀 Запустить торговлю"], ["⬅ Назад", "🔝 В начало", "Остановить торги"]]
     await update.message.reply_text(
         f"Пара выбрана: {text}\nГотово к запуску!",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -92,6 +96,8 @@ async def confirm_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await set_strategy(update, context)
     elif text == "🔝 В начало":
         return await start(update, context)
+    elif text == "Остановить торги":
+        return await stop_trading(update, context)
 
     strategy = user_state[user_id].get("strategy", "Стратегия 2")
     symbol = user_state[user_id].get("symbol", "SOLUSDT")
@@ -104,10 +110,19 @@ async def confirm_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+# ---------- Обработка остановки торговли ----------
+async def stop_trading(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stopped = trade_engine.stop_strategy()
+    if stopped:
+        await update.message.reply_text("✅ Торговля успешно остановлена.", reply_markup=main_menu_keyboard())
+    else:
+        await update.message.reply_text("ℹ Торговля не была запущена.", reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
+
 # ---------- Общие действия ----------
 async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = trade_engine.get_status()
-    await update.message.reply_text(status)
+    await update.message.reply_text(status, reply_markup=main_menu_keyboard())
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Не понял команду. Нажмите кнопку или /start", reply_markup=main_menu_keyboard())
@@ -128,6 +143,7 @@ def main():
     ))
 
     app.add_handler(MessageHandler(filters.Regex("^Статус$"), show_status))
+    app.add_handler(MessageHandler(filters.Regex("^Остановить торги$"), stop_trading))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
 
     app.run_webhook(
