@@ -11,8 +11,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 from dotenv import load_dotenv
-from utils import get_balance
-from trade_engine import start_trading, stop_trading
+from trade_engine import get_balance, start_trading, stop_trading
 import ccxt
 
 load_dotenv()
@@ -111,7 +110,6 @@ async def start_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🚀 Торговля началась для {symbol} [{tf}]")
 
     loop = asyncio.get_event_loop()
-    # Запускаем синхронную функцию в отдельном потоке, чтобы не блокировать бота
     loop.run_in_executor(None, start_trading, exchange, symbol, tf)
 
 async def stop_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,7 +145,6 @@ def main():
     )
 
     app.add_handler(conv_handler)
-    # Добавим команды на всякий случай, если пользователь введёт их вне диалога
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("start_trade", start_trade))
     app.add_handler(CommandHandler("stop_trade", stop_trade))
