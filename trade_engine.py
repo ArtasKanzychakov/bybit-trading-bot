@@ -24,6 +24,7 @@ class TradeEngine:
             api_secret=os.getenv('BYBIT_API_SECRET')
         )
         self.current_strategy_instance = None
+        self.loop = None
 
     async def get_balance(self) -> float:
         """Получает доступный баланс на бирже"""
@@ -61,12 +62,16 @@ class TradeEngine:
 
     def _run_loop(self):
         """Запускает асинхронный цикл в отдельном потоке"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
         try:
-            loop.run_until_complete(self._run())
+            self.loop.run_until_complete(self._run())
+        except Exception as e:
+            logger.error(f"Ошибка в цикле стратегии: {e}")
         finally:
-            loop.close()
+            if self.loop:
+                self.loop.close()
+            self.active = False
 
     async def _run(self):
         """Основной цикл выполнения стратегии"""
@@ -93,6 +98,8 @@ class TradeEngine:
         if self.active:
             try:
                 self._stop_event.set()
+                if self.loop and not self.loop.is_closed():
+                    self.loop.call_soon_threadsafe(self.loop.stop)
                 if self.thread and self.thread.is_alive():
                     self.thread.join(timeout=5)
                 self.active = False
