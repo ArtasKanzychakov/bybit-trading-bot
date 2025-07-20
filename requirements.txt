@@ -2,3 +2,4 @@ python-telegram-bot[webhooks]==20.3
 python-dotenv
 requests
 numpy
+pandas_ta
