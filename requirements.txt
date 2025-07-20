@@ -1,7 +1,5 @@
 python-telegram-bot==20.3
-ccxt
-python-dotenv
+ccxt==1.105.43
 pandas
+numpy
 ta
-apscheduler
-requests
