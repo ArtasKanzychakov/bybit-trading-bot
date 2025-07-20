@@ -1,6 +1,12 @@
 python-telegram-bot==20.3
-ccxt==2.2.97
-pandas
-numpy
-ta
 python-dotenv
+ccxt
+requests
+numpy
+pandas
+ta
+flask
+httpx
+aiohttp
+aiohappyeyeballs
+aiodns
