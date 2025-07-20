@@ -13,3 +13,10 @@ def get_exchange(test_mode: bool):
 
 def now():
     return datetime.utcnow()
+def get_balance(exchange):
+    try:
+        balance = exchange.fetch_balance()
+        usdt_balance = balance['total'].get('USDT', 0)
+        return f"💰 Баланс: {usdt_balance} USDT"
+    except Exception as e:
+        return f"Ошибка получения баланса: {e}"
