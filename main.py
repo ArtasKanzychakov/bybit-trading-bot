@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from trade_engine import TradeEngine
 from db import get_user_settings, update_user_settings, get_open_trades, get_trade_history
 
-# Загрузка и проверка переменных окружения
 load_dotenv()
 
 required_env_vars = ['TELEGRAM_API_KEY', 'BYBIT_API_KEY', 'BYBIT_API_SECRET']
@@ -22,17 +21,15 @@ TELEGRAM_API_KEY = os.getenv('TELEGRAM_API_KEY')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 PORT = int(os.getenv('PORT', '5000'))
-ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')  # Добавьте ваш chat_id в .env
+ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Состояния для ConversationHandler
-CHOOSE_STRATEGY, CHOOSE_SYMBOL, SET_RISK, CONFIRM_RUN = range(4)
+CHOOSE_STRATEGY, CHOOSE_SYMBOL, SET_RISK, SET_LEVERAGE, CONFIRM_RUN = range(5)
 
 trade_engine = TradeEngine()
 user_sessions: Dict[int, Dict[str, Any]] = {}
@@ -53,8 +50,10 @@ def back_menu_keyboard():
 async def start(update: Update, context: CallbackContext):
     try:
         user = update.effective_user
+        balance = await trade_engine.get_balance()
         await update.message.reply_text(
             f"Привет, {user.first_name}! Я бот для автоматической торговли на Bybit.\n"
+            f"Текущий баланс: {balance:.2f} USDT\n\n"
             "Нажмите '📊 Начать настройку', чтобы выбрать стратегию и пару.",
             reply_markup=main_menu_keyboard()
         )
@@ -69,8 +68,17 @@ async def start(update: Update, context: CallbackContext):
 
 async def begin_setup(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    settings = get_user_settings(user_id)
+    balance = await trade_engine.get_balance()
     
+    if balance < 5:  # Минимальный баланс 5 USDT (~450 руб)
+        await update.message.reply_text(
+            f"⚠ Ваш баланс ({balance:.2f} USDT) слишком мал для торговли большинством пар.\n"
+            "Минимальный рекомендуемый депозит: 10 USDT (~900 руб)",
+            reply_markup=main_menu_keyboard()
+        )
+        return ConversationHandler.END
+    
+    settings = get_user_settings(user_id)
     keyboard = [
         ["📈 Стратегия 1 (Bollinger)"],
         ["📉 Стратегия 2 (EMA Cross)"],
@@ -78,7 +86,7 @@ async def begin_setup(update: Update, context: CallbackContext):
     ]
     
     default_strategy = settings[1] if settings else None
-    message = "Выберите торговую стратегию:"
+    message = f"Баланс: {balance:.2f} USDT\nВыберите торговую стратегию:"
     if default_strategy:
         message += f"\n(Текущая по умолчанию: {default_strategy})"
     
@@ -105,13 +113,22 @@ async def set_strategy(update: Update, context: CallbackContext):
     settings = get_user_settings(user_id)
     default_symbol = settings[2] if settings else None
     
-    keyboard = [
-        ["BTCUSDT", "ETHUSDT"],
-        ["SOLUSDT", "XRPUSDT"],
-        ["⬅ Назад", "🔝 В начало", "🛑 Остановить торги"]
-    ]
+    balance = await trade_engine.get_balance()
+    if balance < 10:  # Для баланса <10 USDT показываем только дешевые пары
+        keyboard = [
+            ["SOLUSDT", "XRPUSDT"],
+            ["ADAUSDT", "DOGEUSDT"],
+            ["⬅ Назад", "🔝 В начало", "🛑 Остановить торги"]
+        ]
+    else:
+        keyboard = [
+            ["BTCUSDT", "ETHUSDT"],
+            ["SOLUSDT", "XRPUSDT"],
+            ["ADAUSDT", "DOGEUSDT"],
+            ["⬅ Назад", "🔝 В начало", "🛑 Остановить торги"]
+        ]
     
-    message = f"Выбрана стратегия: {strategy}\nТеперь выберите валютную пару:"
+    message = f"Баланс: {balance:.2f} USDT\nВыбрана стратегия: {strategy}\nВыберите валютную пару:"
     if default_symbol:
         message += f"\n(Текущая по умолчанию: {default_symbol})"
     
@@ -157,19 +174,14 @@ async def set_risk(update: Update, context: CallbackContext):
         if 0.001 <= risk <= 0.05:
             user_sessions[user_id]["risk"] = risk
             
-            strategy = user_sessions[user_id].get("strategy")
-            symbol = user_sessions[user_id].get("symbol")
-            
-            keyboard = [["✅ Запустить торговлю"], ["⬅ Назад", "🔝 В начало"]]
             await update.message.reply_text(
-                f"<b>Подтвердите настройки:</b>\n\n"
-                f"🏷 Стратегия: <code>{strategy}</code>\n"
-                f"📌 Пара: <code>{symbol}</code>\n"
-                f"⚠ Риск: <code>{risk*100}%</code> на сделку",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-                parse_mode='HTML'
+                "Выберите кредитное плечо (2x-10x):",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["2x", "5x", "10x"], ["⬅ Назад", "🔝 В начало"]],
+                    resize_keyboard=True
+                )
             )
-            return CONFIRM_RUN
+            return SET_LEVERAGE
         else:
             await update.message.reply_text(
                 "Риск должен быть между 0.1% и 5%. Попробуйте снова:",
@@ -189,12 +201,60 @@ async def set_risk(update: Update, context: CallbackContext):
         )
         return SET_RISK
 
+async def set_leverage(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    if text == "⬅ Назад":
+        return await set_risk(update, context)
+    elif text == "🔝 В начало":
+        return await start(update, context)
+
+    try:
+        leverage = int(text.strip('x'))
+        if 2 <= leverage <= 10:
+            user_sessions[user_id]["leverage"] = leverage
+            
+            strategy = user_sessions[user_id].get("strategy")
+            symbol = user_sessions[user_id].get("symbol")
+            risk = user_sessions[user_id].get("risk")
+            
+            keyboard = [["✅ Запустить торговлю"], ["⬅ Назад", "🔝 В начало"]]
+            await update.message.reply_text(
+                f"<b>Подтвердите настройки:</b>\n\n"
+                f"🏷 Стратегия: <code>{strategy}</code>\n"
+                f"📌 Пара: <code>{symbol}</code>\n"
+                f"⚠ Риск: <code>{risk*100}%</code> на сделку\n"
+                f"↔ Плечо: <code>{leverage}x</code>",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+                parse_mode='HTML'
+            )
+            return CONFIRM_RUN
+        else:
+            await update.message.reply_text(
+                "Плечо должно быть между 2x и 10x. Попробуйте снова:",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["2x", "5x", "10x"], ["⬅ Назад", "🔝 В начало"]],
+                    resize_keyboard=True
+                )
+            )
+            return SET_LEVERAGE
+    except ValueError:
+        await update.message.reply_text(
+            "Пожалуйста, выберите плечо из предложенных вариантов:",
+            reply_markup=ReplyKeyboardMarkup(
+                [["2x", "5x", "10x"], ["⬅ Назад", "🔝 В начало"]],
+                resize_keyboard=True
+            )
+        )
+        return SET_LEVERAGE
+
 async def confirm_run(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     text = update.message.text
 
     if text == "⬅ Назад":
-        return await set_symbol(update, context)
+        return await set_leverage(update, context)
     elif text == "🔝 В начало":
         return await start(update, context)
 
@@ -202,17 +262,18 @@ async def confirm_run(update: Update, context: CallbackContext):
     strategy = session.get("strategy", "Стратегия 2")
     symbol = session.get("symbol", "BTCUSDT")
     risk = session.get("risk", 0.01)
+    leverage = session.get("leverage", 5)
     
-    # Сохраняем настройки пользователя
-    update_user_settings(user_id, strategy=strategy, symbol=symbol, risk=risk)
+    update_user_settings(user_id, strategy=strategy, symbol=symbol, risk=risk, leverage=leverage)
     
-    started = trade_engine.start_strategy(symbol, strategy, risk)
+    started = trade_engine.start_strategy(symbol, strategy, risk, leverage)
     if started:
         await update.message.reply_text(
             f"✅ Торговля запущена:\n"
             f"Стратегия: <code>{strategy}</code>\n"
             f"Пара: <code>{symbol}</code>\n"
-            f"Рик: <code>{risk*100}%</code>",
+            f"Риск: <code>{risk*100}%</code>\n"
+            f"Плечо: <code>{leverage}x</code>",
             reply_markup=main_menu_keyboard(),
             parse_mode='HTML'
         )
@@ -239,9 +300,10 @@ async def stop_trading(update: Update, context: CallbackContext):
 
 async def show_status(update: Update, context: CallbackContext):
     status = trade_engine.get_status()
+    balance = await trade_engine.get_balance()
     open_trades = get_open_trades()
     
-    message = status
+    message = f"💰 Баланс: {balance:.2f} USDT\n{status}"
     if open_trades:
         message += "\n\n📌 Открытые сделки:\n"
         for trade in open_trades:
@@ -280,33 +342,25 @@ async def unknown(update: Update, context: CallbackContext):
 
 async def send_heartbeat(context: ContextTypes.DEFAULT_TYPE):
     status = trade_engine.get_status()
+    balance = await trade_engine.get_balance()
     await context.bot.send_message(
         chat_id=ADMIN_CHAT_ID,
-        text=f"❤️ Heartbeat\n{status}",
+        text=f"❤️ Heartbeat\nБаланс: {balance:.2f} USDT\n{status}",
         parse_mode='HTML'
     )
-
-async def ping_self(context: ContextTypes.DEFAULT_TYPE):
-    if WEBHOOK_URL:
-        try:
-            async with aiohttp.ClientSession() as session:
-                await session.get(WEBHOOK_URL)
-        except Exception as e:
-            logger.error(f"Ping failed: {e}")
 
 def main():
     try:
         app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
 
-        # Определяем обработчики состояний
         states = {
             CHOOSE_STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_strategy)],
             CHOOSE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_symbol)],
             SET_RISK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_risk)],
+            SET_LEVERAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_leverage)],
             CONFIRM_RUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_run)],
         }
 
-        # Определяем fallback-обработчики
         fallbacks = [
             CommandHandler("start", start),
             MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading),
@@ -326,10 +380,8 @@ def main():
         app.add_handler(MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
 
-        # Запускаем фоновые задачи
         if WEBHOOK_URL and ADMIN_CHAT_ID:
             app.job_queue.run_repeating(send_heartbeat, interval=3600, first=10)
-            app.job_queue.run_repeating(ping_self, interval=300)
 
         if WEBHOOK_URL and WEBHOOK_SECRET:
             app.run_webhook(
