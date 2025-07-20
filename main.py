@@ -21,83 +21,96 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Состояния для ConversationHandler
+CHOOSE_STRATEGY, CHOOSE_SYMBOL, CONFIRM_RUN = range(3)
+
 trade_engine = TradeEngine()
-
-# Состояния
-CHOOSE_STRATEGY, CHOOSE_SYMBOL = range(2)
-
-# Хранилище пользовательских выборов
 user_state = {}  # user_id: {strategy: ..., symbol: ...}
 
-# Доступные пары
-available_pairs = ["SOLUSDT", "BTCUSDT", "ETHUSDT", "XRPUSDT", "DOGEUSDT"]
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        ["Выбрать стратегию"],
-        ["Выбрать пару"],
-        ["Запустить торговлю", "Остановить торговлю"],
-        ["Статус"]
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        "Привет! Я бот для автоматической торговли на Bybit.\n"
-        "Выберите действие с помощью кнопок ниже.",
-        reply_markup=reply_markup
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [["Начать настройку"], ["Статус"]],
+        resize_keyboard=True
     )
 
-async def choose_strategy_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["Стратегия 1"], ["Стратегия 2"]]
+def back_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [["⬅ Назад"], ["🔝 В начало"]],
+        resize_keyboard=True
+    )
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет! Я бот для автоматической торговли на Bybit.\nНажмите 'Начать настройку', чтобы выбрать стратегию и пару.",
+        reply_markup=main_menu_keyboard()
+    )
+    return ConversationHandler.END
+
+# ---------- Шаг 1: Выбор стратегии ----------
+async def begin_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["Стратегия 1"], ["Стратегия 2"], ["⬅ Назад", "🔝 В начало"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Выберите стратегию:", reply_markup=reply_markup)
+    await update.message.reply_text("Выберите торговую стратегию:", reply_markup=reply_markup)
     return CHOOSE_STRATEGY
 
 async def set_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    strategy = update.message.text
     user_id = update.effective_user.id
-    user_state.setdefault(user_id, {})["strategy"] = strategy
-    await update.message.reply_text(f"Вы выбрали {strategy}")
-    return ConversationHandler.END
+    text = update.message.text
 
-async def choose_symbol_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["SOLUSDT", "BTCUSDT"], ["ETHUSDT", "XRPUSDT"], ["DOGEUSDT"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Выберите валютную пару:", reply_markup=reply_markup)
+    if text == "⬅ Назад" or text == "🔝 В начало":
+        return await start(update, context)
+
+    user_state.setdefault(user_id, {})["strategy"] = text
+    keyboard = [["SOLUSDT", "BTCUSDT"], ["ETHUSDT", "XRPUSDT"], ["DOGEUSDT"], ["⬅ Назад", "🔝 В начало"]]
+    await update.message.reply_text(f"Стратегия выбрана: {text}\nТеперь выберите валютную пару:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     return CHOOSE_SYMBOL
 
+# ---------- Шаг 2: Выбор пары ----------
 async def set_symbol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = update.message.text
     user_id = update.effective_user.id
-    user_state.setdefault(user_id, {})["symbol"] = symbol
-    await update.message.reply_text(f"Вы выбрали {symbol}")
+    text = update.message.text
+
+    if text == "⬅ Назад":
+        return await begin_setup(update, context)
+    elif text == "🔝 В начало":
+        return await start(update, context)
+
+    user_state.setdefault(user_id, {})["symbol"] = text
+    keyboard = [["🚀 Запустить торговлю"], ["⬅ Назад", "🔝 В начало"]]
+    await update.message.reply_text(
+        f"Пара выбрана: {text}\nГотово к запуску!",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+    return CONFIRM_RUN
+
+# ---------- Шаг 3: Подтверждение запуска ----------
+async def confirm_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    if text == "⬅ Назад":
+        return await set_strategy(update, context)
+    elif text == "🔝 В начало":
+        return await start(update, context)
+
+    strategy = user_state[user_id].get("strategy", "Стратегия 2")
+    symbol = user_state[user_id].get("symbol", "SOLUSDT")
+    started = trade_engine.start_strategy(symbol, strategy)
+
+    if started:
+        await update.message.reply_text(f"✅ Торговля запущена: {symbol} ({strategy})", reply_markup=main_menu_keyboard())
+    else:
+        await update.message.reply_text("⚠ Торговля уже запущена.", reply_markup=main_menu_keyboard())
+
     return ConversationHandler.END
 
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
-    state = user_state.get(user_id, {})
+# ---------- Общие действия ----------
+async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status = trade_engine.get_status()
+    await update.message.reply_text(status)
 
-    if text == "Выбрать стратегию":
-        return await choose_strategy_prompt(update, context)
-
-    if text == "Выбрать пару":
-        return await choose_symbol_prompt(update, context)
-
-    if text == "Запустить торговлю":
-        strategy = state.get("strategy", "Стратегия 2")
-        symbol = state.get("symbol", "SOLUSDT")
-        started = trade_engine.start_strategy(symbol, strategy)
-        if started:
-            await update.message.reply_text(f"Торговля запущена: {symbol} ({strategy})")
-        else:
-            await update.message.reply_text("Торговля уже идёт.")
-
-    if text == "Остановить торговлю":
-        trade_engine.stop_strategy()
-        await update.message.reply_text("Торговля остановлена.")
-
-    if text == "Статус":
-        await update.message.reply_text(trade_engine.get_status())
+async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Не понял команду. Нажмите кнопку или /start", reply_markup=main_menu_keyboard())
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
@@ -105,18 +118,17 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
     app.add_handler(ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Выбрать стратегию$"), choose_strategy_prompt)],
-        states={CHOOSE_STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_strategy)]},
-        fallbacks=[]
+        entry_points=[MessageHandler(filters.Regex("^Начать настройку$"), begin_setup)],
+        states={
+            CHOOSE_STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_strategy)],
+            CHOOSE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_symbol)],
+            CONFIRM_RUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_run)],
+        },
+        fallbacks=[MessageHandler(filters.COMMAND, unknown)]
     ))
 
-    app.add_handler(ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^Выбрать пару$"), choose_symbol_prompt)],
-        states={CHOOSE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_symbol)]},
-        fallbacks=[]
-    ))
-
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_button))
+    app.add_handler(MessageHandler(filters.Regex("^Статус$"), show_status))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
 
     app.run_webhook(
         listen="0.0.0.0",
