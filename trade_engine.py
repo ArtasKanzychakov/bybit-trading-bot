@@ -1,67 +1,98 @@
 import threading
 import time
 import logging
+import asyncio
+from typing import Optional, Dict, Any
 from strategy_one import StrategyOne
 from strategy_two import StrategyTwo
+from trading import BybitAPI
+from db import get_user_settings
 
 logger = logging.getLogger(__name__)
 
 class TradeEngine:
     def __init__(self):
-        self.strategy = None
-        self.symbol = None
-        self.thread = None
-        self.active = False
+        self.strategy: Optional[str] = None
+        self.symbol: Optional[str] = None
+        self.risk: float = 0.01
+        self.thread: Optional[threading.Thread] = None
+        self.active: bool = False
         self._stop_event = threading.Event()
+        self.api = BybitAPI(
+            api_key=os.getenv('BYBIT_API_KEY'),
+            api_secret=os.getenv('BYBIT_API_SECRET')
+        )
+        self.current_strategy_instance = None
 
-    def start_strategy(self, symbol, strategy_name="Стратегия 2"):
+    async def get_balance(self) -> float:
+        """Получает доступный баланс на бирже"""
+        balance = await self.api.get_balance()
+        return float(balance['available_balance'])
+
+    def start_strategy(self, symbol: str, strategy_name: str = "Стратегия 2", risk: float = 0.01) -> bool:
         if self.active:
             logger.warning("Стратегия уже запущена")
             return False
 
         self.symbol = symbol
+        self.strategy = strategy_name
+        self.risk = risk
         self._stop_event.clear()
 
         if strategy_name == "Стратегия 1":
-            self.strategy = StrategyOne()
+            self.current_strategy_instance = StrategyOne(self.api, risk)
         else:
-            self.strategy = StrategyTwo()
+            self.current_strategy_instance = StrategyTwo(self.api, risk)
 
-        self.strategy.name = strategy_name
         self.active = True
-
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
-        logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol}")
+        logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol} с риском {risk*100}%")
         return True
 
-    def _run(self):
+    def _run_loop(self):
+        """Запускает асинхронный цикл в отдельном потоке"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(self._run())
+        loop.close()
+
+    async def _run(self):
+        """Основной цикл выполнения стратегии"""
         try:
             while not self._stop_event.is_set():
-                if self.strategy:
-                    logger.debug(f"Выполняется стратегия {self.strategy.name} на {self.symbol}")
-                    self.strategy.execute(self.symbol)
-                time.sleep(15)
+                if self.current_strategy_instance and self.symbol:
+                    try:
+                        balance = await self.get_balance()
+                        await self.current_strategy_instance.execute_trade(self.symbol, balance)
+                    except Exception as e:
+                        logger.error(f"Ошибка при выполнении сделки: {e}", exc_info=True)
+                
+                await asyncio.sleep(15)
         except Exception as e:
-            logger.exception(f"Ошибка в стратегии: {e}")
+            logger.exception(f"Критическая ошибка в стратегии: {e}")
         finally:
             self.active = False
             logger.info("Стратегия остановлена")
 
-    def stop_strategy(self):
+    def stop_strategy(self) -> bool:
         if self.active:
             self._stop_event.set()
             if self.thread and self.thread.is_alive():
                 self.thread.join()
             self.active = False
+            self.current_strategy_instance = None
             logger.info("Торговля остановлена")
             return True
-        else:
-            logger.info("Нет активной стратегии для остановки")
-            return False
+        logger.info("Нет активной стратегии для остановки")
+        return False
 
-    def get_status(self):
+    def get_status(self) -> str:
         if self.active and self.strategy and self.symbol:
-            return f"Стратегия активна: {self.strategy.name}\nПара: {self.symbol}"
-        else:
-            return "Стратегия не запущена"
+            return (
+                f"📊 <b>Активная стратегия</b>:\n"
+                f"🏷 <b>Стратегия</b>: <code>{self.strategy}</code>\n"
+                f"📌 <b>Пара</b>: <code>{self.symbol}</code>\n"
+                f"⚠ <b>Риск на сделку</b>: <code>{self.risk*100}%</code>"
+            )
+        return "ℹ <b>Стратегия не запущена</b>"
