@@ -1,5 +1,3 @@
-# trade_engine.py
-
 import time
 import logging
 
@@ -16,15 +14,14 @@ def get_balance(exchange):
 
 def start_trading(exchange, symbol, timeframe):
     logger.info(f"Начинаем торговлю на {symbol} с таймфреймом {timeframe}")
-    # Здесь твоя логика торговли
-    # Пока простой пример с циклом (не блокирующим в asyncio)
     try:
-        for _ in range(10):  # просто пример 10 циклов
-            logger.info(f"Торговля: проверка {symbol} на таймфрейме {timeframe}")
+        for i in range(10):
+            ticker = exchange.fetch_ticker(symbol)
+            price = ticker['last']
+            logger.info(f"[{i+1}/10] Цена {symbol}: {price}")
             time.sleep(5)
     except Exception as e:
         logger.error(f"Ошибка в торговле: {e}")
 
 def stop_trading():
-    # Заглушка, можно добавить логику остановки
-    logger.info("Остановка торговли по запросу")
+    logger.info("Остановка торговли по запросу.")
