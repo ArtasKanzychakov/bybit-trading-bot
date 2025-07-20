@@ -116,6 +116,9 @@ class StrategyTwo:
             return
             
         if signal.action == 'buy':
+            tp_price = signal.price * 1.02  # TP +2%
+            sl_price = signal.price * 0.99  # SL -1%
+            
             if self.position == 'short' and self.current_trade_id:
                 await self.api.close_position(symbol, 'Buy', signal.volume)
                 close_trade(self.current_trade_id, signal.price, None)
@@ -127,7 +130,9 @@ class StrategyTwo:
                 symbol=symbol,
                 side='buy',
                 quantity=signal.volume,
-                price=signal.price
+                price=signal.price,
+                take_profit=tp_price,
+                stop_loss=sl_price
             )
             self.position = 'long'
             self.current_trade_id = add_trade(
@@ -139,6 +144,9 @@ class StrategyTwo:
             log_trade_entry('Strategy 2', symbol, signal.price, signal.volume)
             
         elif signal.action == 'sell':
+            tp_price = signal.price * 0.98  # TP -2% (для шорта)
+            sl_price = signal.price * 1.01  # SL +1% (для шорта)
+            
             if self.position == 'long' and self.current_trade_id:
                 await self.api.close_position(symbol, 'Sell', signal.volume)
                 close_trade(self.current_trade_id, signal.price, None)
@@ -150,7 +158,9 @@ class StrategyTwo:
                 symbol=symbol,
                 side='sell',
                 quantity=signal.volume,
-                price=signal.price
+                price=signal.price,
+                take_profit=tp_price,
+                stop_loss=sl_price
             )
             self.position = 'short'
             self.current_trade_id = add_trade(
