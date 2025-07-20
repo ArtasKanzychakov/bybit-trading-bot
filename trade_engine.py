@@ -19,7 +19,7 @@ class TradeEngine:
         self.thread: Optional[threading.Thread] = None
         self.active: bool = False
         self._stop_event = threading.Event()
-        self.api = None  # Инициализация отложена до первого запуска
+        self.api = None
         self.current_strategy_instance = None
         self.loop = None
 
@@ -35,8 +35,18 @@ class TradeEngine:
         """Получает доступный баланс на бирже"""
         try:
             await self._init_api()
-            balance = await self.api.get_balance()
-            return float(balance['available_balance'])
+            balance_data = await self.api.get_balance()
+            
+            # Обрабатываем новый формат ответа Bybit API v5
+            if balance_data and 'list' in balance_data:
+                for account in balance_data['list']:
+                    if account.get('accountType') == 'UNIFIED':
+                        for coin in account.get('coin', []):
+                            if coin.get('coin') == 'USDT':
+                                return float(coin.get('availableToWithdraw', 0))
+            
+            logger.error(f"Неожиданный формат ответа баланса: {balance_data}")
+            return 0.0
         except Exception as e:
             logger.error(f"Ошибка получения баланса: {e}")
             return 0.0
@@ -93,6 +103,7 @@ class TradeEngine:
                             logger.warning("Нулевой баланс, торговля приостановлена")
                     except Exception as e:
                         logger.error(f"Ошибка при выполнении сделки: {e}", exc_info=True)
+                        await asyncio.sleep(60)  # Ждем минуту при ошибках API
                 
                 await asyncio.sleep(15)
         except Exception as e:
