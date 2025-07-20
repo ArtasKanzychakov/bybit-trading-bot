@@ -16,6 +16,7 @@ class TradeEngine:
         self.strategy: Optional[str] = None
         self.symbol: Optional[str] = None
         self.risk: float = 0.01
+        self.leverage: int = 5
         self.thread: Optional[threading.Thread] = None
         self.active: bool = False
         self._stop_event = threading.Event()
@@ -48,7 +49,7 @@ class TradeEngine:
             logger.error(f"Ошибка получения баланса: {e}")
             return 0.0
 
-    def start_strategy(self, symbol: str, strategy_name: str = "Стратегия 2", risk: float = 0.01) -> bool:
+    def start_strategy(self, symbol: str, strategy_name: str = "Стратегия 2", risk: float = 0.01, leverage: int = 5) -> bool:
         if self.active:
             logger.warning("Стратегия уже запущена")
             return False
@@ -57,17 +58,18 @@ class TradeEngine:
             self.symbol = symbol
             self.strategy = strategy_name
             self.risk = risk
+            self.leverage = leverage
             self._stop_event.clear()
 
             if strategy_name == "Стратегия 1":
-                self.current_strategy_instance = StrategyOne(self.api, risk)
+                self.current_strategy_instance = StrategyOne(self.api, risk, leverage)
             else:
-                self.current_strategy_instance = StrategyTwo(self.api, risk)
+                self.current_strategy_instance = StrategyTwo(self.api, risk, leverage)
 
             self.active = True
             self.thread = threading.Thread(target=self._run_loop, daemon=True)
             self.thread.start()
-            logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol} с риском {risk*100}%")
+            logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol} с риском {risk*100}% и плечом {leverage}x")
             return True
         except Exception as e:
             logger.error(f"Ошибка запуска стратегии: {e}")
@@ -126,6 +128,7 @@ class TradeEngine:
                 f"📊 <b>Активная стратегия</b>:\n"
                 f"🏷 <b>Стратегия</b>: <code>{self.strategy}</code>\n"
                 f"📌 <b>Пара</b>: <code>{self.symbol}</code>\n"
-                f"⚠ <b>Риск на сделку</b>: <code>{self.risk*100}%</code>"
+                f"⚠ <b>Риск на сделку</b>: <code>{self.risk*100}%</code>\n"
+                f"↔ <b>Плечо</b>: <code>{self.leverage}x</code>"
             )
         return "ℹ <b>Стратегия не запущена</b>"
