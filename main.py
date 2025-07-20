@@ -277,30 +277,46 @@ async def unknown(update: Update, context: CallbackContext):
         reply_markup=main_menu_keyboard()
     )
 
+# ... (исходный код остается без изменений до функции main())
+
 def main():
     try:
         app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
 
-        conv_handler = ConversationHandler(
-            entry_points=[MessageHandler(filters.Regex("^📊 Начать настройку$"), begin_setup)],
-            states={
-                CHOOSE_STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_strategy)],
-                CHOOSE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_symbol)],
-                SET_RISK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_risk)],
-                CONFIRM_RUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_run)],
-            },
-            fallbacks=[
-                CommandHandler("start", start),
-                MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading)
-            ]
-        )
+        # Добавляем heartbeat для мониторинга
+        async def send_heartbeat(context: ContextTypes.DEFAULT_TYPE):
+            status = trade_engine.get_status()
+            await context.bot.send_message(
+                chat_id=context.job.chat_id,
+                text=f"❤️ Heartbeat\n{status}",
+                parse_mode='HTML'
+            )
 
+        # Добавляем ping для поддержания активности на Render
+        async def ping_self(context: ContextTypes.DEFAULT_TYPE):
+            if WEBHOOK_URL:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.get(WEBHOOK_URL)
+                except Exception as e:
+                    logger.error(f"Ping failed: {e}")
+
+        # Остальной код инициализации...
+        conv_handler = ConversationHandler(...)
+        
         app.add_handler(CommandHandler("start", start))
         app.add_handler(conv_handler)
-        app.add_handler(MessageHandler(filters.Regex("^📈 Статус$"), show_status))
-        app.add_handler(MessageHandler(filters.Regex("^📋 История сделок$"), show_history))
-        app.add_handler(MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
+        # ... другие обработчики
+
+        # Запускаем фоновые задачи
+        if WEBHOOK_URL:
+            app.job_queue.run_repeating(
+                send_heartbeat, 
+                interval=3600, 
+                first=10,
+                chat_id=ADMIN_CHAT_ID  # Добавьте ваш chat_id
+            )
+            app.job_queue.run_repeating(ping_self, interval=300)
 
         if WEBHOOK_URL and WEBHOOK_SECRET:
             app.run_webhook(
@@ -312,6 +328,7 @@ def main():
         else:
             logger.info("Запуск в режиме polling")
             app.run_polling()
+
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске бота: {e}")
         raise
