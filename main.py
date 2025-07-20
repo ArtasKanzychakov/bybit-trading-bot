@@ -10,13 +10,20 @@ from dotenv import load_dotenv
 from trade_engine import TradeEngine
 from db import get_user_settings, update_user_settings, get_open_trades, get_trade_history
 
+# Загрузка и проверка переменных окружения
 load_dotenv()
+
+required_env_vars = ['TELEGRAM_API_KEY', 'BYBIT_API_KEY', 'BYBIT_API_SECRET']
+for var in required_env_vars:
+    if not os.getenv(var):
+        raise ValueError(f"Необходимо установить переменную окружения {var}")
 
 TELEGRAM_API_KEY = os.getenv('TELEGRAM_API_KEY')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 PORT = int(os.getenv('PORT', '5000'))
 
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -43,13 +50,21 @@ def back_menu_keyboard():
     )
 
 async def start(update: Update, context: CallbackContext):
-    user = update.effective_user
-    await update.message.reply_text(
-        f"Привет, {user.first_name}! Я бот для автоматической торговли на Bybit.\n"
-        "Нажмите '📊 Начать настройку', чтобы выбрать стратегию и пару.",
-        reply_markup=main_menu_keyboard()
-    )
-    return ConversationHandler.END
+    try:
+        user = update.effective_user
+        await update.message.reply_text(
+            f"Привет, {user.first_name}! Я бот для автоматической торговли на Bybit.\n"
+            "Нажмите '📊 Начать настройку', чтобы выбрать стратегию и пару.",
+            reply_markup=main_menu_keyboard()
+        )
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Ошибка в команде start: {e}")
+        await update.message.reply_text(
+            "Произошла ошибка. Пожалуйста, попробуйте позже.",
+            reply_markup=main_menu_keyboard()
+        )
+        return ConversationHandler.END
 
 async def begin_setup(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -263,38 +278,43 @@ async def unknown(update: Update, context: CallbackContext):
     )
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
+    try:
+        app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📊 Начать настройку$"), begin_setup)],
-        states={
-            CHOOSE_STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_strategy)],
-            CHOOSE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_symbol)],
-            SET_RISK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_risk)],
-            CONFIRM_RUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_run)],
-        },
-        fallbacks=[
-            CommandHandler("start", start),
-            MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading)
-        ]
-    )
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
-    app.add_handler(MessageHandler(filters.Regex("^📈 Статус$"), show_status))
-    app.add_handler(MessageHandler(filters.Regex("^📋 История сделок$"), show_history))
-    app.add_handler(MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
-
-    if WEBHOOK_URL:
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=WEBHOOK_SECRET,
-            webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}"
+        conv_handler = ConversationHandler(
+            entry_points=[MessageHandler(filters.Regex("^📊 Начать настройку$"), begin_setup)],
+            states={
+                CHOOSE_STRATEGY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_strategy)],
+                CHOOSE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_symbol)],
+                SET_RISK: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_risk)],
+                CONFIRM_RUN: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_run)],
+            },
+            fallbacks=[
+                CommandHandler("start", start),
+                MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading)
+            ]
         )
-    else:
-        app.run_polling()
+
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(conv_handler)
+        app.add_handler(MessageHandler(filters.Regex("^📈 Статус$"), show_status))
+        app.add_handler(MessageHandler(filters.Regex("^📋 История сделок$"), show_history))
+        app.add_handler(MessageHandler(filters.Regex("^🛑 Остановить торги$"), stop_trading))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
+
+        if WEBHOOK_URL and WEBHOOK_SECRET:
+            app.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                url_path=WEBHOOK_SECRET,
+                webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}"
+            )
+        else:
+            logger.info("Запуск в режиме polling")
+            app.run_polling()
+    except Exception as e:
+        logger.critical(f"Критическая ошибка при запуске бота: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
