@@ -15,7 +15,7 @@ class TradeSignal:
 
 class StrategyOne:
     def __init__(self, api: BybitAPI, risk_per_trade: float = 0.01):
-        self.position: Optional[str] = None  # 'long', 'short' или None
+        self.position: Optional[str] = None
         self.api = api
         self.risk_per_trade = risk_per_trade
         self.bb_period = 20
@@ -27,7 +27,6 @@ class StrategyOne:
         self.current_trade_id: Optional[int] = None
 
     async def fetch_data(self, symbol: str, interval: str = '5m', limit: int = 100) -> pd.DataFrame:
-        """Получает данные с биржи"""
         klines = await self.api.get_klines(symbol=symbol, interval=interval, limit=limit)
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume'
@@ -38,7 +37,6 @@ class StrategyOne:
         })
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Вычисляет все индикаторы для стратегии"""
         # Bollinger Bands
         rolling_mean = df['close'].rolling(window=self.bb_period).mean()
         rolling_std = df['close'].rolling(window=self.bb_period).std()
@@ -65,8 +63,8 @@ class StrategyOne:
         df['supertrend_upper'] = hl2 + (self.supertrend_multiplier * atr)
         df['supertrend_lower'] = hl2 - (self.supertrend_multiplier * atr)
         
-        # Определяем направление Supertrend
-        df['supertrend_direction'] = 1  # 1 = восходящий, -1 = нисходящий
+        # Supertrend direction
+        df['supertrend_direction'] = 1
         for i in range(1, len(df)):
             if df['close'].iloc[i] > df['supertrend_upper'].iloc[i-1]:
                 df['supertrend_direction'].iloc[i] = 1
@@ -81,12 +79,10 @@ class StrategyOne:
         return df
 
     def calculate_position_size(self, price: float, balance: float) -> float:
-        """Рассчитывает объем позиции на основе риска"""
         risk_amount = balance * self.risk_per_trade
         return risk_amount / price
 
     async def analyze(self, symbol: str, balance: float) -> TradeSignal:
-        """Анализирует рынок и возвращает торговый сигнал"""
         df = await self.fetch_data(symbol)
         if len(df) < 50:
             return TradeSignal('hold', 0, 0, 'Not enough data')
@@ -97,7 +93,7 @@ class StrategyOne:
         price = last['close']
         position_size = self.calculate_position_size(price, balance)
         
-        # Условия для входа в лонг
+        # Long entry
         if self.position != 'long':
             if (last['close'] <= last['bb_lower'] and 
                 last['supertrend_direction'] == 1 and
@@ -109,7 +105,7 @@ class StrategyOne:
                     'Bollinger touch lower + Supertrend UP + RSI >30 + Volume spike'
                 )
         
-        # Условия для входа в шорт
+        # Short entry
         if self.position != 'short':
             if (last['close'] >= last['bb_upper'] and 
                 last['supertrend_direction'] == -1 and
@@ -121,7 +117,7 @@ class StrategyOne:
                     'Bollinger touch upper + Supertrend DOWN + RSI <70 + Volume spike'
                 )
         
-        # Условия для выхода из позиции
+        # Exit conditions
         if self.position == 'long' and (
             last['supertrend_direction'] == -1 or 
             last['close'] >= last['bb_mid']
@@ -143,7 +139,6 @@ class StrategyOne:
         return TradeSignal('hold', 0, 0, 'No trading conditions met')
 
     async def execute_trade(self, symbol: str, balance: float):
-        """Выполняет торговую операцию на основе анализа"""
         signal = await self.analyze(symbol, balance)
         
         if signal.action == 'hold':
