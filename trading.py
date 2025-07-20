@@ -13,6 +13,7 @@ class BybitAPI:
         self.api_key = api_key
         self.api_secret = api_secret
         self._session = None
+        self.leverage = 5  # Default leverage
 
     @property
     async def session(self):
@@ -81,6 +82,20 @@ class BybitAPI:
         }
         return await self._request('GET', endpoint, params, signed=True)
 
+    async def set_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]:
+        """Set leverage for a specific symbol"""
+        if leverage < 2 or leverage > 10:
+            raise ValueError("Leverage must be between 2x and 10x")
+            
+        endpoint = '/private/linear/position/set-leverage'
+        params = {
+            'symbol': symbol,
+            'buy_leverage': leverage,
+            'sell_leverage': leverage
+        }
+        self.leverage = leverage
+        return await self._request('POST', endpoint, params, signed=True)
+
     async def place_order(
         self, 
         symbol: str, 
@@ -101,7 +116,7 @@ class BybitAPI:
             'reduce_only': False,
             'close_on_trigger': False,
             'is_isolated': True,
-            'leverage': 5
+            'leverage': self.leverage
         }
         
         if price is not None:
@@ -126,7 +141,7 @@ class BybitAPI:
             'reduce_only': True,
             'close_on_trigger': True,
             'is_isolated': True,
-            'leverage': 5
+            'leverage': self.leverage
         }
         return await self._request('POST', endpoint, params, signed=True)
 
