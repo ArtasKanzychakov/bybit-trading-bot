@@ -1,9 +1,9 @@
 python-telegram-bot[webhooks]==20.3
 python-dotenv
-requests
-numpy
-pandas
-python-binance
-sqlalchemy
-pybit
-setuptools
+requests==2.32.4
+numpy==2.3.1
+pandas==2.3.1
+python-binance==1.0.29
+sqlalchemy==2.0.41
+pybit==5.11.0
+setuptools==80.9.0
