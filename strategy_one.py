@@ -1,146 +1,108 @@
 import numpy as np
+import pandas as pd
 
 class StrategyOne:
     def __init__(self):
         self.position = None  # 'long', 'short' или None
 
-    def calculate_bollinger_bands(self, prices, period=20, std_dev=2):
-        """
-        Возвращает среднюю, верхнюю и нижнюю полосы Боллинджера.
-        """
-        if len(prices) < period:
-            return None, None, None
-        
-        sma = np.convolve(prices, np.ones(period)/period, mode='valid')
-        std = np.array([np.std(prices[i:i+period]) for i in range(len(prices)-period+1)])
+    def calculate_bollinger_bands(self, close, period=20, std_dev=2):
+        sma = close.rolling(window=period).mean()
+        std = close.rolling(window=period).std()
         upper = sma + std_dev * std
         lower = sma - std_dev * std
-
-        # Для удобства возвращаем значения, выровненные с ценами
-        # Добавим None вначале, чтобы длина совпадала с prices
-        padding = [None]*(period-1)
-        return padding + list(sma), padding + list(upper), padding + list(lower)
-
-    def calculate_supertrend(self, high, low, close, period=10, multiplier=3):
-        """
-        Рассчет Supertrend. Возвращает массив тренда: True — восходящий (зелёный), False — нисходящий (красный).
-        """
-        atr = self.calculate_atr(high, low, close, period)
-        hl2 = (np.array(high) + np.array(low)) / 2
-
-        upperband = hl2 + (multiplier * atr)
-        lowerband = hl2 - (multiplier * atr)
-
-        trend = [True] * len(close)  # True — восходящий, False — нисходящий
-
-        for i in range(period, len(close)):
-            if close[i] > upperband[i-1]:
-                trend[i] = True
-            elif close[i] < lowerband[i-1]:
-                trend[i] = False
-            else:
-                trend[i] = trend[i-1]
-                # Дополнительно корректируем верхние и нижние границы, чтобы избежать ложных сигналов
-                if trend[i] and lowerband[i] < lowerband[i-1]:
-                    lowerband[i] = lowerband[i-1]
-                if not trend[i] and upperband[i] > upperband[i-1]:
-                    upperband[i] = upperband[i-1]
-        return trend
+        return sma, upper, lower
 
     def calculate_atr(self, high, low, close, period=10):
-        """
-        Рассчет Average True Range.
-        """
-        tr = []
-        for i in range(1, len(close)):
-            tr.append(max(high[i] - low[i], abs(high[i] - close[i-1]), abs(low[i] - close[i-1])))
-        tr = np.array(tr)
-        atr = []
-        for i in range(len(tr)):
-            if i < period:
-                atr.append(np.mean(tr[:i+1]))
+        high_low = high - low
+        high_close_prev = (high - close.shift(1)).abs()
+        low_close_prev = (low - close.shift(1)).abs()
+        tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+        atr = tr.rolling(window=period, min_periods=period).mean()
+        return atr
+
+    def calculate_supertrend(self, high, low, close, period=10, multiplier=3):
+        atr = self.calculate_atr(high, low, close, period)
+        hl2 = (high + low) / 2
+
+        upperband = hl2 + multiplier * atr
+        lowerband = hl2 - multiplier * atr
+
+        trend = pd.Series(True, index=close.index)  # True — восходящий, False — нисходящий
+        final_upperband = upperband.copy()
+        final_lowerband = lowerband.copy()
+
+        for i in range(period, len(close)):
+            if close.iloc[i] > final_upperband.iloc[i - 1]:
+                trend.iloc[i] = True
+            elif close.iloc[i] < final_lowerband.iloc[i - 1]:
+                trend.iloc[i] = False
             else:
-                atr.append((atr[-1] * (period - 1) + tr[i]) / period)
-        return [None] + atr  # Для выравнивания длины с входными данными
+                trend.iloc[i] = trend.iloc[i - 1]
+                if trend.iloc[i] and final_lowerband.iloc[i] < final_lowerband.iloc[i - 1]:
+                    final_lowerband.iloc[i] = final_lowerband.iloc[i - 1]
+                if not trend.iloc[i] and final_upperband.iloc[i] > final_upperband.iloc[i - 1]:
+                    final_upperband.iloc[i] = final_upperband.iloc[i - 1]
+        return trend
 
-    def calculate_rsi(self, prices, period=14):
-        deltas = np.diff(prices)
-        seed = deltas[:period]
-        up = seed[seed >= 0].sum() / period
-        down = -seed[seed < 0].sum() / period
-        rs = up / down if down != 0 else 0
-        rsi = [100 - 100 / (1 + rs)]
+    def calculate_rsi(self, close, period=14):
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=period).mean()
+        avg_loss = loss.rolling(window=period).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
 
-        for i in range(period, len(prices) - 1):
-            delta = deltas[i]
-            if delta > 0:
-                upval = delta
-                downval = 0
-            else:
-                upval = 0
-                downval = -delta
-
-            up = (up * (period - 1) + upval) / period
-            down = (down * (period - 1) + downval) / period
-
-            rs = up / down if down != 0 else 0
-            rsi.append(100 - 100 / (1 + rs))
-
-        return [None]*period + rsi
-
-    def decide(self, close, high, low, volume):
+    def decide(self, df):
         """
-        Принимает списки close, high, low, volume.
-        Возвращает решение: "buy", "sell" или "hold".
+        df — DataFrame с колонками: 'close', 'high', 'low', 'volume'
+        Возвращает "buy", "sell" или "hold"
         """
-        if len(close) < 30:
+        if len(df) < 30:
             return "hold"
 
-        # Индикаторы
-        sma, upper_band, lower_band = self.calculate_bollinger_bands(close)
-        supertrend = self.calculate_supertrend(high, low, close)
-        rsi = self.calculate_rsi(close)
-        avg_volume = np.mean(volume)
+        sma, upper_band, lower_band = self.calculate_bollinger_bands(df['close'])
+        supertrend = self.calculate_supertrend(df['high'], df['low'], df['close'])
+        rsi = self.calculate_rsi(df['close'])
+        avg_volume = df['volume'].rolling(window=20).mean()
 
-        idx = -1  # Последний индекс
+        idx = -1  # последний индекс
 
-        price = close[idx]
-        volume_curr = volume[idx]
+        price = df['close'].iloc[idx]
+        vol_curr = df['volume'].iloc[idx]
 
-        # Проверки, если есть None в данных индикаторов - hold
-        if None in (sma[idx], upper_band[idx], lower_band[idx], rsi[idx]) or idx >= len(supertrend) or supertrend[idx] is None:
+        # Проверка None/NaN
+        if pd.isna(sma.iloc[idx]) or pd.isna(upper_band.iloc[idx]) or pd.isna(lower_band.iloc[idx]) or pd.isna(rsi.iloc[idx]) or pd.isna(avg_volume.iloc[idx]):
             return "hold"
 
-        # Проверяем условия входа
-        # Лонг
-        touch_lower = price <= lower_band[idx]
-        trend_up = supertrend[idx]  # True — зелёный
-        rsi_val = rsi[idx]
-        vol_high = volume_curr > avg_volume
+        touch_lower = price <= lower_band.iloc[idx]
+        touch_upper = price >= upper_band.iloc[idx]
+        trend_up = supertrend.iloc[idx]
+        rsi_val = rsi.iloc[idx]
+        vol_high = vol_curr > avg_volume.iloc[idx]
 
+        # Вход в лонг
         if self.position != "long":
             if touch_lower and trend_up and (30 < rsi_val <= 70) and vol_high:
                 self.position = "long"
                 return "buy"
 
-        # Шорт
-        touch_upper = price >= upper_band[idx]
-        trend_down = not supertrend[idx]
+        # Вход в шорт
         if self.position != "short":
-            if touch_upper and trend_down and (30 <= rsi_val < 70) and vol_high:
+            if touch_upper and not trend_up and (30 <= rsi_val < 70) and vol_high:
                 self.position = "short"
                 return "sell"
 
-        # Условия выхода
-        # Для лонга: смена тренда на нисходящий или достижение верхней полосы (exit), фиксация части прибыли при средней линии
+        # Выход из лонга
         if self.position == "long":
-            if not trend_up or price >= sma[idx]:
+            if (not trend_up) or (price >= sma.iloc[idx]):
                 self.position = None
                 return "sell"
 
-        # Для шорта: смена тренда на восходящий или достижение нижней полосы (exit), фиксация части прибыли при средней линии
+        # Выход из шорта
         if self.position == "short":
-            if trend_up or price <= sma[idx]:
+            if trend_up or (price <= sma.iloc[idx]):
                 self.position = None
                 return "buy"
 
