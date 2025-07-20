@@ -3,3 +3,4 @@ ccxt==2.2.97
 pandas
 numpy
 ta
+python-dotenv
