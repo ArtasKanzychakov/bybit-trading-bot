@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from dotenv import load_dotenv
 from flask import Flask, request
 
@@ -11,33 +12,35 @@ from telegram.ext import (
     ContextTypes,
     filters,
     ConversationHandler,
-    Dispatcher,
 )
 
 from utils import get_balance
 from trade_engine import start_trading, stop_trading
 import ccxt
 
+# Загрузка переменных из .env
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_API_KEY")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET") or "webhook"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # полный адрес, например https://your-app.onrender.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 5000))
 
+# Flask сервер
 app = Flask(__name__)
 bot = Bot(TELEGRAM_TOKEN)
-
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # Состояния
 CHOOSE_SYMBOL, CHOOSE_TIMEFRAME, MAIN_MENU = range(3)
 
+# Доступные пары и таймфреймы
 ALLOWED_SYMBOLS = ["BTC/USDT", "ETH/USDT", "XRP/USDT"]
 ALLOWED_TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h"]
 
+# Получение аккаунта Bybit
 def get_bybit_account():
     return ccxt.bybit({
         "apiKey": os.getenv("BYBIT_API_KEY_REAL"),
@@ -46,6 +49,7 @@ def get_bybit_account():
         "options": {"defaultType": "future"},
     })
 
+# Команды Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Это бот для торговли на Bybit.\nВыберите валютную пару:",
@@ -111,10 +115,7 @@ async def start_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Сначала выполните /start.")
         return
     await update.message.reply_text(f"🚀 Торговля началась: {symbol} [{tf}]")
-    # Блокирующую функцию в фоновый поток
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, start_trading, exchange, symbol, tf)
+    asyncio.get_event_loop().run_in_executor(None, start_trading, exchange, symbol, tf)
 
 async def stop_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -129,6 +130,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Диалог завершён.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+# Диалог
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
     states={
@@ -146,11 +148,8 @@ conv_handler = ConversationHandler(
 )
 
 application.add_handler(conv_handler)
-application.add_handler(CommandHandler("balance", balance))
-application.add_handler(CommandHandler("start_trade", start_trade))
-application.add_handler(CommandHandler("stop_trade", stop_trade))
-application.add_handler(CommandHandler("cancel", cancel))
 
+# Flask webhook
 @app.route(f"/{WEBHOOK_SECRET}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
@@ -158,8 +157,7 @@ def webhook():
     return "ok", 200
 
 if __name__ == "__main__":
-    # Установка webhook при старте
-    bot.delete_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}")
+    asyncio.run(bot.delete_webhook())
+    asyncio.run(bot.set_webhook(url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}"))
     logger.info(f"Webhook установлен: {WEBHOOK_URL}/{WEBHOOK_SECRET}")
     app.run(host="0.0.0.0", port=PORT)
