@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import logging
@@ -26,36 +27,46 @@ class TradeEngine:
 
     async def get_balance(self) -> float:
         """Получает доступный баланс на бирже"""
-        balance = await self.api.get_balance()
-        return float(balance['available_balance'])
+        try:
+            balance = await self.api.get_balance()
+            return float(balance['available_balance'])
+        except Exception as e:
+            logger.error(f"Ошибка получения баланса: {e}")
+            return 0.0
 
     def start_strategy(self, symbol: str, strategy_name: str = "Стратегия 2", risk: float = 0.01) -> bool:
         if self.active:
             logger.warning("Стратегия уже запущена")
             return False
 
-        self.symbol = symbol
-        self.strategy = strategy_name
-        self.risk = risk
-        self._stop_event.clear()
+        try:
+            self.symbol = symbol
+            self.strategy = strategy_name
+            self.risk = risk
+            self._stop_event.clear()
 
-        if strategy_name == "Стратегия 1":
-            self.current_strategy_instance = StrategyOne(self.api, risk)
-        else:
-            self.current_strategy_instance = StrategyTwo(self.api, risk)
+            if strategy_name == "Стратегия 1":
+                self.current_strategy_instance = StrategyOne(self.api, risk)
+            else:
+                self.current_strategy_instance = StrategyTwo(self.api, risk)
 
-        self.active = True
-        self.thread = threading.Thread(target=self._run_loop, daemon=True)
-        self.thread.start()
-        logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol} с риском {risk*100}%")
-        return True
+            self.active = True
+            self.thread = threading.Thread(target=self._run_loop, daemon=True)
+            self.thread.start()
+            logger.info(f"Стратегия '{strategy_name}' запущена для пары {symbol} с риском {risk*100}%")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка запуска стратегии: {e}")
+            return False
 
     def _run_loop(self):
         """Запускает асинхронный цикл в отдельном потоке"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._run())
-        loop.close()
+        try:
+            loop.run_until_complete(self._run())
+        finally:
+            loop.close()
 
     async def _run(self):
         """Основной цикл выполнения стратегии"""
@@ -64,7 +75,10 @@ class TradeEngine:
                 if self.current_strategy_instance and self.symbol:
                     try:
                         balance = await self.get_balance()
-                        await self.current_strategy_instance.execute_trade(self.symbol, balance)
+                        if balance > 0:
+                            await self.current_strategy_instance.execute_trade(self.symbol, balance)
+                        else:
+                            logger.warning("Нулевой баланс, торговля приостановлена")
                     except Exception as e:
                         logger.error(f"Ошибка при выполнении сделки: {e}", exc_info=True)
                 
@@ -77,13 +91,17 @@ class TradeEngine:
 
     def stop_strategy(self) -> bool:
         if self.active:
-            self._stop_event.set()
-            if self.thread and self.thread.is_alive():
-                self.thread.join()
-            self.active = False
-            self.current_strategy_instance = None
-            logger.info("Торговля остановлена")
-            return True
+            try:
+                self._stop_event.set()
+                if self.thread and self.thread.is_alive():
+                    self.thread.join(timeout=5)
+                self.active = False
+                self.current_strategy_instance = None
+                logger.info("Торговля остановлена")
+                return True
+            except Exception as e:
+                logger.error(f"Ошибка остановки стратегии: {e}")
+                return False
         logger.info("Нет активной стратегии для остановки")
         return False
 
