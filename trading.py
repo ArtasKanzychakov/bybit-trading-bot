@@ -12,7 +12,14 @@ class BybitAPI:
     def __init__(self, api_key: str, api_secret: str):
         self.api_key = api_key
         self.api_secret = api_secret
-        self.session = aiohttp.ClientSession()
+        self._session = None
+
+    @property
+    async def session(self):
+        """Ленивая инициализация сессии"""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     def _sign_request(self, params: Dict[str, Any]) -> str:
         """Подписывает запрос с использованием API секрета"""
@@ -36,7 +43,8 @@ class BybitAPI:
             params['sign'] = self._sign_request(params)
         
         try:
-            async with self.session.request(
+            session = await self.session
+            async with session.request(
                 method, url, params=params, headers=headers
             ) as response:
                 data = await response.json()
@@ -101,8 +109,13 @@ class BybitAPI:
         }
         return await self._request('POST', endpoint, params, signed=True)
 
+    async def close(self):
+        """Закрывает сессию"""
+        if self._session and not self._session.closed:
+            await self._session.close()
+
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.session.close()
+        await self.close()
