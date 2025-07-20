@@ -2,4 +2,8 @@ python-telegram-bot[webhooks]==20.3
 python-dotenv
 requests
 numpy
+pandas
 pandas_ta
+python-binance
+sqlalchemy
+pybit
