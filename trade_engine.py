@@ -19,16 +19,22 @@ class TradeEngine:
         self.thread: Optional[threading.Thread] = None
         self.active: bool = False
         self._stop_event = threading.Event()
-        self.api = BybitAPI(
-            api_key=os.getenv('BYBIT_API_KEY'),
-            api_secret=os.getenv('BYBIT_API_SECRET')
-        )
+        self.api = None  # Инициализация отложена до первого запуска
         self.current_strategy_instance = None
         self.loop = None
+
+    async def _init_api(self):
+        """Инициализирует API при первом запуске"""
+        if self.api is None:
+            self.api = BybitAPI(
+                api_key=os.getenv('BYBIT_API_KEY'),
+                api_secret=os.getenv('BYBIT_API_SECRET')
+            )
 
     async def get_balance(self) -> float:
         """Получает доступный баланс на бирже"""
         try:
+            await self._init_api()
             balance = await self.api.get_balance()
             return float(balance['available_balance'])
         except Exception as e:
@@ -65,6 +71,7 @@ class TradeEngine:
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         try:
+            self.loop.run_until_complete(self._init_api())
             self.loop.run_until_complete(self._run())
         except Exception as e:
             logger.error(f"Ошибка в цикле стратегии: {e}")
