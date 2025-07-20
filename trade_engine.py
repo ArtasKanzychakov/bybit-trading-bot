@@ -52,11 +52,14 @@ class TradeEngine:
     def stop_strategy(self):
         if self.active:
             self._stop_event.set()
-            self.thread.join()
+            if self.thread and self.thread.is_alive():
+                self.thread.join()
             self.active = False
             logger.info("Торговля остановлена")
+            return True
         else:
             logger.info("Нет активной стратегии для остановки")
+            return False
 
     def get_status(self):
         if self.active and self.strategy and self.symbol:
