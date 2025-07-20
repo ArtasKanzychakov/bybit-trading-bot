@@ -16,13 +16,11 @@ class BybitAPI:
 
     @property
     async def session(self):
-        """Ленивая инициализация сессии"""
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
 
     def _sign_request(self, params: Dict[str, Any]) -> str:
-        """Подписывает запрос с использованием API секрета"""
         param_str = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
         return hmac.new(
             self.api_secret.encode('utf-8'),
@@ -31,7 +29,6 @@ class BybitAPI:
         ).hexdigest()
 
     async def _request(self, method: str, endpoint: str, params: Optional[Dict] = None, signed: bool = False) -> Dict:
-        """Выполняет HTTP запрос к API Bybit"""
         url = f"{self.BASE_URL}{endpoint}"
         headers = {'Content-Type': 'application/json'}
         
@@ -47,15 +44,22 @@ class BybitAPI:
             async with session.request(
                 method, url, params=params, headers=headers
             ) as response:
-                data = await response.json()
-                if data.get('ret_code') != 0:
-                    raise Exception(f"API error: {data.get('ret_msg')}")
-                return data.get('result', {})
+                if response.status != 200:
+                    text = await response.text()
+                    raise Exception(f"API returned {response.status}: {text}")
+                
+                try:
+                    data = await response.json()
+                    if data.get('ret_code') != 0:
+                        raise Exception(f"API error: {data.get('ret_msg')}")
+                    return data.get('result', {})
+                except json.JSONDecodeError:
+                    text = await response.text()
+                    raise Exception(f"Invalid JSON response: {text}")
         except Exception as e:
             raise Exception(f"Request failed: {str(e)}")
 
     async def get_klines(self, symbol: str, interval: str = '5m', limit: int = 100) -> List[Dict]:
-        """Получает исторические данные свечей"""
         endpoint = '/public/linear/kline'
         params = {
             'symbol': symbol,
@@ -65,9 +69,12 @@ class BybitAPI:
         return await self._request('GET', endpoint, params)
 
     async def get_balance(self) -> Dict[str, Any]:
-        """Получает баланс аккаунта"""
-        endpoint = '/v2/private/wallet/balance'
-        return await self._request('GET', endpoint, signed=True)
+        endpoint = '/v5/account/wallet-balance'
+        params = {
+            'accountType': 'UNIFIED',
+            'coin': 'USDT'
+        }
+        return await self._request('GET', endpoint, params, signed=True)
 
     async def place_order(
         self, 
@@ -75,9 +82,10 @@ class BybitAPI:
         side: str, 
         quantity: float, 
         price: Optional[float] = None,
-        order_type: str = 'Market'
+        order_type: str = 'Market',
+        take_profit: Optional[float] = None,
+        stop_loss: Optional[float] = None
     ) -> Dict[str, Any]:
-        """Размещает ордер на бирже"""
         endpoint = '/private/linear/order/create'
         params = {
             'symbol': symbol,
@@ -86,17 +94,23 @@ class BybitAPI:
             'qty': quantity,
             'time_in_force': 'GoodTillCancel',
             'reduce_only': False,
-            'close_on_trigger': False
+            'close_on_trigger': False,
+            'is_isolated': True,
+            'leverage': 5
         }
         
         if price is not None:
             params['price'] = price
             params['order_type'] = 'Limit'
         
+        if take_profit:
+            params['take_profit'] = take_profit
+        if stop_loss:
+            params['stop_loss'] = stop_loss
+        
         return await self._request('POST', endpoint, params, signed=True)
 
     async def close_position(self, symbol: str, side: str, quantity: float) -> Dict[str, Any]:
-        """Закрывает позицию по символу"""
         endpoint = '/private/linear/order/create'
         params = {
             'symbol': symbol,
@@ -105,12 +119,13 @@ class BybitAPI:
             'qty': quantity,
             'time_in_force': 'GoodTillCancel',
             'reduce_only': True,
-            'close_on_trigger': True
+            'close_on_trigger': True,
+            'is_isolated': True,
+            'leverage': 5
         }
         return await self._request('POST', endpoint, params, signed=True)
 
     async def close(self):
-        """Закрывает сессию"""
         if self._session and not self._session.closed:
             await self._session.close()
 
