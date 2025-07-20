@@ -15,7 +15,7 @@ class TradeSignal:
 
 class StrategyTwo:
     def __init__(self, api: BybitAPI, risk_per_trade: float = 0.01):
-        self.position: Optional[str] = None  # 'long', 'short' или None
+        self.position: Optional[str] = None
         self.api = api
         self.risk_per_trade = risk_per_trade
         self.ema_fast = 20
@@ -25,7 +25,6 @@ class StrategyTwo:
         self.current_trade_id: Optional[int] = None
 
     async def fetch_data(self, symbol: str, interval: str = '15m', limit: int = 100) -> pd.DataFrame:
-        """Получает данные с биржи"""
         klines = await self.api.get_klines(symbol=symbol, interval=interval, limit=limit)
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume'
@@ -36,7 +35,6 @@ class StrategyTwo:
         })
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Вычисляет все индикаторы для стратегии"""
         # EMA
         df['ema_fast'] = df['close'].ewm(span=self.ema_fast, adjust=False).mean()
         df['ema_slow'] = df['close'].ewm(span=self.ema_slow, adjust=False).mean()
@@ -56,12 +54,10 @@ class StrategyTwo:
         return df
 
     def calculate_position_size(self, price: float, balance: float) -> float:
-        """Рассчитывает объем позиции на основе риска"""
         risk_amount = balance * self.risk_per_trade
         return risk_amount / price
 
     async def analyze(self, symbol: str, balance: float) -> TradeSignal:
-        """Анализирует рынок и возвращает торговый сигнал"""
         df = await self.fetch_data(symbol)
         if len(df) < 60:
             return TradeSignal('hold', 0, 0, 'Not enough data')
@@ -73,11 +69,11 @@ class StrategyTwo:
         price = last['close']
         position_size = self.calculate_position_size(price, balance)
         
-        # Определяем пересечения EMA
+        # Crosses
         golden_cross = (prev['ema_fast'] <= prev['ema_slow']) and (last['ema_fast'] > last['ema_slow'])
         death_cross = (prev['ema_fast'] >= prev['ema_slow']) and (last['ema_fast'] < last['ema_slow'])
         
-        # Условия для входа в лонг
+        # Long entry
         if self.position != 'long' and golden_cross:
             if last['rsi'] > 50 and last['rsi'] <= 70 and last['volume'] > last['volume_ma']:
                 return TradeSignal(
@@ -85,7 +81,7 @@ class StrategyTwo:
                     'Golden Cross + RSI >50 + Volume spike'
                 )
         
-        # Условия для входа в шорт
+        # Short entry
         if self.position != 'short' and death_cross:
             if last['rsi'] < 50 and last['rsi'] >= 30 and last['volume'] > last['volume_ma']:
                 return TradeSignal(
@@ -93,7 +89,7 @@ class StrategyTwo:
                     'Death Cross + RSI <50 + Volume spike'
                 )
         
-        # Условия для выхода из позиции
+        # Exit conditions
         if self.position == 'long' and (death_cross or last['rsi'] > 70):
             return TradeSignal(
                 'sell', price, position_size,
@@ -109,7 +105,6 @@ class StrategyTwo:
         return TradeSignal('hold', 0, 0, 'No trading conditions met')
 
     async def execute_trade(self, symbol: str, balance: float):
-        """Выполняет торговую операцию на основе анализа"""
         signal = await self.analyze(symbol, balance)
         
         if signal.action == 'hold':
