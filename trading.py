@@ -87,14 +87,14 @@ class BybitAPI:
         
         return await self._request('POST', endpoint, params, signed=True)
 
-    async def close_position(self, symbol: str) -> Dict[str, Any]:
-        """Закрывает все позиции по символу"""
+    async def close_position(self, symbol: str, side: str, quantity: float) -> Dict[str, Any]:
+        """Закрывает позицию по символу"""
         endpoint = '/private/linear/order/create'
         params = {
             'symbol': symbol,
-            'side': 'Sell' if self.position == 'long' else 'Buy',
+            'side': side,
             'order_type': 'Market',
-            'qty': self.position_size,
+            'qty': quantity,
             'time_in_force': 'GoodTillCancel',
             'reduce_only': True,
             'close_on_trigger': True
