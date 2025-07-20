@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
 from typing import Optional, Tuple, Dict, Any
 from dataclasses import dataclass
 from trading import BybitAPI
@@ -24,6 +23,7 @@ class StrategyOne:
         self.rsi_period = 14
         self.atr_period = 10
         self.supertrend_multiplier = 3
+        self.volume_ma_period = 20
 
     async def fetch_data(self, symbol: str, interval: str = '5m', limit: int = 100) -> pd.DataFrame:
         """Получает данные с биржи"""
@@ -31,41 +31,57 @@ class StrategyOne:
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume'
         ])
-        df = df.astype({
+        return df.astype({
             'open': float, 'high': float, 'low': float, 
             'close': float, 'volume': float
         })
-        return df
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Вычисляет все индикаторы для стратегии"""
         # Bollinger Bands
-        df['bb_mid'], df['bb_upper'], df['bb_lower'] = ta.bbands(
-            df['close'], length=self.bb_period, std=self.bb_std
-        )
+        rolling_mean = df['close'].rolling(window=self.bb_period).mean()
+        rolling_std = df['close'].rolling(window=self.bb_period).std()
+        df['bb_mid'] = rolling_mean
+        df['bb_upper'] = rolling_mean + (rolling_std * self.bb_std)
+        df['bb_lower'] = rolling_mean - (rolling_std * self.bb_std)
         
         # RSI
-        df['rsi'] = ta.rsi(df['close'], length=self.rsi_period)
+        delta = df['close'].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=self.rsi_period).mean()
+        avg_loss = loss.rolling(window=self.rsi_period).mean()
+        rs = avg_gain / avg_loss
+        df['rsi'] = 100 - (100 / (1 + rs))
         
         # Supertrend
-        st = ta.supertrend(
-            df['high'], df['low'], df['close'], 
-            length=self.atr_period, 
-            multiplier=self.supertrend_multiplier
-        )
-        df['supertrend'] = st[f'SUPERT_{self.atr_period}_{self.supertrend_multiplier}']
-        df['supertrend_direction'] = st[f'SUPERTd_{self.atr_period}_{self.supertrend_multiplier}']
+        high_low = df['high'] - df['low']
+        high_close_prev = (df['high'] - df['close'].shift(1)).abs()
+        low_close_prev = (df['low'] - df['close'].shift(1)).abs()
+        tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+        atr = tr.rolling(window=self.atr_period).mean()
+        hl2 = (df['high'] + df['low']) / 2
+        df['supertrend_upper'] = hl2 + (self.supertrend_multiplier * atr)
+        df['supertrend_lower'] = hl2 - (self.supertrend_multiplier * atr)
+        
+        # Определяем направление Supertrend
+        df['supertrend_direction'] = 1  # 1 = восходящий, -1 = нисходящий
+        for i in range(1, len(df)):
+            if df['close'].iloc[i] > df['supertrend_upper'].iloc[i-1]:
+                df['supertrend_direction'].iloc[i] = 1
+            elif df['close'].iloc[i] < df['supertrend_lower'].iloc[i-1]:
+                df['supertrend_direction'].iloc[i] = -1
+            else:
+                df['supertrend_direction'].iloc[i] = df['supertrend_direction'].iloc[i-1]
         
         # Volume MA
-        df['volume_ma'] = df['volume'].rolling(window=20).mean()
+        df['volume_ma'] = df['volume'].rolling(window=self.volume_ma_period).mean()
         
         return df
 
     def calculate_position_size(self, price: float, balance: float) -> float:
         """Рассчитывает объем позиции на основе риска"""
         risk_amount = balance * self.risk_per_trade
-        # В реальной стратегии здесь должна быть логика расчета объема
-        # на основе стоп-лосса и риска
         return risk_amount / price
 
     async def analyze(self, symbol: str, balance: float) -> TradeSignal:
@@ -89,7 +105,7 @@ class StrategyOne:
                 
                 return TradeSignal(
                     'buy', price, position_size,
-                    'Bollinger touch + Supertrend UP + RSI OK + Volume spike'
+                    'Bollinger touch lower + Supertrend UP + RSI >30 + Volume spike'
                 )
         
         # Условия для входа в шорт
@@ -101,20 +117,26 @@ class StrategyOne:
                 
                 return TradeSignal(
                     'sell', price, position_size,
-                    'Bollinger touch + Supertrend DOWN + RSI OK + Volume spike'
+                    'Bollinger touch upper + Supertrend DOWN + RSI <70 + Volume spike'
                 )
         
         # Условия для выхода из позиции
-        if self.position == 'long' and last['supertrend_direction'] == -1:
+        if self.position == 'long' and (
+            last['supertrend_direction'] == -1 or 
+            last['close'] >= last['bb_mid']
+        ):
             return TradeSignal(
                 'sell', price, position_size,
-                'Supertrend reversed to DOWN'
+                'Supertrend reversed or price reached middle BB'
             )
             
-        if self.position == 'short' and last['supertrend_direction'] == 1:
+        if self.position == 'short' and (
+            last['supertrend_direction'] == 1 or 
+            last['close'] <= last['bb_mid']
+        ):
             return TradeSignal(
                 'buy', price, position_size,
-                'Supertrend reversed to UP'
+                'Supertrend reversed or price reached middle BB'
             )
         
         return TradeSignal('hold', 0, 0, 'No trading conditions met')
@@ -128,11 +150,9 @@ class StrategyOne:
             
         if signal.action == 'buy':
             if self.position == 'short':
-                # Закрываем шорт перед открытием лонга
                 await self.api.close_position(symbol)
                 self.position = None
                 
-            # Открываем лонг
             await self.api.place_order(
                 symbol=symbol,
                 side='buy',
@@ -141,7 +161,7 @@ class StrategyOne:
             )
             self.position = 'long'
             trade_id = add_trade(
-                strategy='Strategy 1',
+                strategy='Strategy 1 (Bollinger)',
                 symbol=symbol,
                 entry_price=signal.price,
                 volume=signal.volume
@@ -150,11 +170,9 @@ class StrategyOne:
             
         elif signal.action == 'sell':
             if self.position == 'long':
-                # Закрываем лонг перед открытием шорта
                 await self.api.close_position(symbol)
                 self.position = None
                 
-            # Открываем шорт
             await self.api.place_order(
                 symbol=symbol,
                 side='sell',
@@ -163,7 +181,7 @@ class StrategyOne:
             )
             self.position = 'short'
             trade_id = add_trade(
-                strategy='Strategy 1',
+                strategy='Strategy 1 (Bollinger)',
                 symbol=symbol,
                 entry_price=signal.price,
                 volume=signal.volume
