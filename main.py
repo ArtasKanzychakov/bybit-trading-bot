@@ -82,68 +82,80 @@ async def handle_webhook_error(update: Update, context: CallbackContext):
     """Обработчик ошибок вебхука"""
     logger.error(f"Webhook error: {context.error}")
 
-async def setup_webhook(app):
-    """Настройка вебхука при запуске"""
-    if WEBHOOK_URL and WEBHOOK_SECRET:
-        webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_SECRET}"
-        logger.info(f"Setting webhook to: {webhook_url}")
-        
-        try:
-            await app.bot.delete_webhook()
-            await app.bot.set_webhook(
-                url=webhook_url,
-                secret_token=WEBHOOK_SECRET,
-                drop_pending_updates=True
-            )
-            logger.info("Webhook set successfully")
-        except Exception as e:
-            logger.critical(f"Failed to set webhook: {e}")
-            raise
-
 def create_application():
     """Создает и настраивает приложение"""
-    app = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
+    application = ApplicationBuilder().token(TELEGRAM_API_KEY).build()
     
     # Базовые обработчики
-    app.add_handler(TypeHandler(Update, log_update))
-    app.add_error_handler(handle_webhook_error)
+    application.add_handler(TypeHandler(Update, log_update))
+    application.add_error_handler(handle_webhook_error)
 
     # Обработчики команд
-    app.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start))
     
     # Здесь добавьте остальные обработчики...
     
-    return app
+    return application
 
-async def run_webhook(app):
-    """Запуск в режиме вебхука"""
-    await setup_webhook(app)
-    await app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}",
-        secret_token=WEBHOOK_SECRET
-    )
-
-async def run_polling(app):
-    """Запуск в режиме polling"""
-    logger.info("Starting in polling mode...")
-    await app.run_polling()
-
-async def main():
+async def setup_webhook(application):
+    """Настройка вебхука"""
+    if not WEBHOOK_URL or not WEBHOOK_SECRET:
+        return False
+    
+    webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_SECRET}"
+    logger.info(f"Setting webhook to: {webhook_url}")
+    
     try:
-        logger.info("Initializing bot...")
-        app = create_application()
+        await application.bot.delete_webhook()
+        await application.bot.set_webhook(
+            url=webhook_url,
+            secret_token=WEBHOOK_SECRET,
+            drop_pending_updates=True
+        )
+        logger.info("Webhook configured successfully")
+        return True
+    except Exception as e:
+        logger.critical(f"Failed to set webhook: {e}")
+        return False
+
+async def run_application():
+    """Основная функция запуска приложения"""
+    try:
+        application = create_application()
         
         if WEBHOOK_URL and WEBHOOK_SECRET:
-            await run_webhook(app)
+            if await setup_webhook(application):
+                await application.run_webhook(
+                    listen="0.0.0.0",
+                    port=PORT,
+                    webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}",
+                    secret_token=WEBHOOK_SECRET
+                )
+            else:
+                logger.warning("Falling back to polling mode")
+                await application.run_polling()
         else:
-            await run_polling(app)
+            logger.info("Starting in polling mode")
+            await application.run_polling()
             
     except Exception as e:
         logger.critical(f"Bot crashed: {e}", exc_info=True)
         raise
 
-if __name__ == "__main__":
+def main():
+    """Точка входа"""
     import asyncio
-    asyncio.run(main())
+    
+    # Создаем новую event loop для избежания конфликтов
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(run_application())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    finally:
+        loop.close()
+
+if __name__ == "__main__":
+    main()
