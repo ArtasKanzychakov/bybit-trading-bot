@@ -23,6 +23,9 @@ class TradeEngine:
         self.api = None
         self.current_strategy_instance = None
         self.loop = None
+        self.last_balance_check = 0
+        self.balance_cache = 0.0
+        self.cache_timeout = 60  # Кеширование баланса на 60 секунд
 
     async def _init_api(self):
         if self.api is None:
@@ -30,24 +33,51 @@ class TradeEngine:
                 api_key=os.getenv('BYBIT_API_KEY'),
                 api_secret=os.getenv('BYBIT_API_SECRET')
             )
+            await self.api.initialize()  # Явная инициализация
 
-    async def get_balance(self) -> float:
+    async def get_balance(self, force_update: bool = False) -> float:
+        """Получение баланса с кешированием и принудительным обновлением"""
         try:
-            await self._init_api()
-            balance_data = await self.api.get_balance()
+            current_time = time.time()
             
-            if balance_data and 'list' in balance_data:
+            # Если баланс недавно проверяли и не требуется принудительное обновление
+            if not force_update and current_time - self.last_balance_check < self.cache_timeout:
+                return self.balance_cache
+                
+            await self._init_api()
+            logger.debug("Запрашиваем актуальный баланс с биржи...")
+            
+            # Добавляем параметры для избежания кеширования
+            balance_data = await self.api.get_balance(params={
+                'timestamp': int(current_time * 1000),
+                'recvWindow': 5000
+            })
+            
+            if not balance_data:
+                logger.error("Пустой ответ от API при запросе баланса")
+                return self.balance_cache
+
+            logger.debug(f"Raw balance response: {balance_data}")
+            
+            if 'list' in balance_data:
                 for account in balance_data['list']:
                     if account.get('accountType') == 'UNIFIED':
                         for coin in account.get('coin', []):
                             if coin.get('coin') == 'USDT':
-                                return float(coin.get('availableToWithdraw', 0))
+                                available = float(coin.get('availableToWithdraw', 0))
+                                self.balance_cache = available
+                                self.last_balance_check = current_time
+                                logger.info(f"Текущий баланс: {available:.2f} USDT")
+                                return available
             
             logger.error(f"Неожиданный формат ответа баланса: {balance_data}")
-            return 0.0
+            return self.balance_cache
+            
         except Exception as e:
-            logger.error(f"Ошибка получения баланса: {e}")
-            return 0.0
+            logger.error(f"Ошибка получения баланса: {str(e)}", exc_info=True)
+            return self.balance_cache
+
+    # ... остальные методы класса без изменений ...
 
     def start_strategy(self, symbol: str, strategy_name: str = "Стратегия 2", risk: float = 0.01, leverage: int = 5) -> bool:
         if self.active:
