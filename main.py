@@ -1,6 +1,7 @@
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+from typing import Any, Dict  # Добавьте этот импорт
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -34,6 +35,8 @@ def setup_logging():
 load_dotenv()
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# ... остальной код без изменений ...
 
 # Проверка переменных окружения
 required_env_vars = ['TELEGRAM_API_KEY', 'BYBIT_API_KEY', 'BYBIT_API_SECRET']
