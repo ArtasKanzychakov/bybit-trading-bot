@@ -37,14 +37,14 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # Проверка переменных окружения
-required_env_vars = ['TELEGRAM_API_KEY']
+required_env_vars = ['TELEGRAM_API_KEY', 'WEBHOOK_URL', 'WEBHOOK_SECRET']
 for var in required_env_vars:
     if not os.getenv(var):
         logger.critical(f"Missing environment variable: {var}")
         raise ValueError(f"Необходимо установить переменную окружения {var}")
 
 TELEGRAM_API_KEY = os.getenv('TELEGRAM_API_KEY')
-WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', 'default_secret')
+WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 PORT = int(os.getenv('PORT', '5000'))
 
@@ -99,9 +99,6 @@ def create_application():
 
 async def setup_webhook(application):
     """Настройка вебхука"""
-    if not WEBHOOK_URL or not WEBHOOK_SECRET:
-        return False
-    
     webhook_url = f"{WEBHOOK_URL}/{WEBHOOK_SECRET}"
     logger.info(f"Setting webhook to: {webhook_url}")
     
@@ -118,44 +115,32 @@ async def setup_webhook(application):
         logger.critical(f"Failed to set webhook: {e}")
         return False
 
-async def run_application():
-    """Основная функция запуска приложения"""
-    try:
-        application = create_application()
-        
-        if WEBHOOK_URL and WEBHOOK_SECRET:
-            if await setup_webhook(application):
-                await application.run_webhook(
-                    listen="0.0.0.0",
-                    port=PORT,
-                    webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}",
-                    secret_token=WEBHOOK_SECRET
-                )
-            else:
-                logger.warning("Falling back to polling mode")
-                await application.run_polling()
-        else:
-            logger.info("Starting in polling mode")
-            await application.run_polling()
-            
-    except Exception as e:
-        logger.critical(f"Bot crashed: {e}", exc_info=True)
-        raise
+async def run_webhook():
+    """Запуск приложения в режиме вебхука"""
+    application = create_application()
+    
+    if not await setup_webhook(application):
+        raise RuntimeError("Failed to setup webhook")
+    
+    await application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}",
+        secret_token=WEBHOOK_SECRET
+    )
 
 def main():
     """Точка входа"""
     import asyncio
     
-    # Создаем новую event loop для избежания конфликтов
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
     try:
-        loop.run_until_complete(run_application())
+        # Используем asyncio.run() для корректного управления event loop
+        asyncio.run(run_webhook())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
-    finally:
-        loop.close()
+    except Exception as e:
+        logger.critical(f"Bot crashed: {e}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     main()
