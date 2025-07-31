@@ -5,6 +5,9 @@ import time
 import json
 import aiohttp
 from typing import Optional, Dict, Any, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BybitAPI:
     BASE_URL = 'https://api.bybit.com'
@@ -13,12 +16,20 @@ class BybitAPI:
         self.api_key = api_key
         self.api_secret = api_secret
         self._session = None
-        self.leverage = 5  # Default leverage
+        self.leverage = 5
+        self.initialized = False
+
+    async def initialize(self):
+        """Явная инициализация соединения"""
+        if not self.initialized:
+            self._session = aiohttp.ClientSession()
+            self.initialized = True
+            logger.info("API подключение инициализировано")
 
     @property
     async def session(self):
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            await self.initialize()
         return self._session
 
     def _sign_request(self, params: Dict[str, Any]) -> str:
@@ -31,7 +42,11 @@ class BybitAPI:
 
     async def _request(self, method: str, endpoint: str, params: Optional[Dict] = None, signed: bool = False) -> Dict:
         url = f"{self.BASE_URL}{endpoint}"
-        headers = {'Content-Type': 'application/json'}
+        headers = {
+            'Content-Type': 'application/json',
+            'X-BAPI-RECV-WINDOW': '5000',
+            'X-BAPI-TIMESTAMP': str(int(time.time() * 1000))
+        }
         
         if signed:
             if params is None:
@@ -45,34 +60,37 @@ class BybitAPI:
             async with session.request(
                 method, url, params=params, headers=headers
             ) as response:
+                response_text = await response.text()
+                
                 if response.status != 200:
-                    text = await response.text()
-                    raise Exception(f"API returned {response.status}: {text}")
+                    logger.error(f"API error {response.status}: {response_text}")
+                    raise Exception(f"API returned {response.status}: {response_text}")
                 
                 try:
-                    data = await response.json()
-                    if data.get('ret_code') != 0:
-                        raise Exception(f"API error: {data.get('ret_msg')}")
-                    return data.get('result', {})
+                    data = json.loads(response_text)
+                    if data.get('retCode') != 0 and data.get('ret_code') != 0:
+                        msg = data.get('retMsg') or data.get('ret_msg', 'Unknown error')
+                        logger.error(f"API error: {msg}")
+                        raise Exception(f"API error: {msg}")
+                    return data.get('result', data)
                 except json.JSONDecodeError:
-                    text = await response.text()
-                    raise Exception(f"Invalid JSON response: {text}")
-        except RuntimeError as e:
-            if "Event loop is closed" in str(e):
-                await asyncio.sleep(5)
-                return await self._request(method, endpoint, params, signed)
-            raise
+                    logger.error(f"Invalid JSON: {response_text}")
+                    raise Exception(f"Invalid JSON response: {response_text}")
+                    
         except Exception as e:
-            raise Exception(f"Request failed: {str(e)}")
+            logger.error(f"Request failed: {str(e)}", exc_info=True)
+            raise
 
-    async def get_klines(self, symbol: str, interval: str = '5m', limit: int = 100) -> List[Dict]:
-        endpoint = '/public/linear/kline'
-        params = {
-            'symbol': symbol,
-            'interval': interval,
-            'limit': limit
-        }
-        return await self._request('GET', endpoint, params)
+    async def get_balance(self, params: Optional[Dict] = None) -> Dict[str, Any]:
+        endpoint = '/v5/account/wallet-balance'
+        params = params or {}
+        params.update({
+            'accountType': 'UNIFIED',
+            'coin': 'USDT'
+        })
+        return await self._request('GET', endpoint, params, signed=True)
+
+    # ... остальные методы без изменений ...
 
     async def get_balance(self) -> Dict[str, Any]:
         endpoint = '/v5/account/wallet-balance'
