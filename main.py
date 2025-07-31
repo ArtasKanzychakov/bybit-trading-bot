@@ -124,6 +124,7 @@ async def begin_setup(update: Update, context: CallbackContext):
         await update.message.reply_text(
             message,
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        )
         return CHOOSE_STRATEGY
         
     except Exception as e:
