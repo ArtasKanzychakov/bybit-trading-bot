@@ -115,32 +115,18 @@ async def setup_webhook(application):
         logger.critical(f"Failed to set webhook: {e}")
         return False
 
-async def run_webhook():
-    """Запуск приложения в режиме вебхука"""
+def run_bot():
+    """Запуск бота в режиме вебхука"""
     application = create_application()
     
-    if not await setup_webhook(application):
-        raise RuntimeError("Failed to setup webhook")
-    
-    await application.run_webhook(
+    # Настройка вебхука
+    application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}",
-        secret_token=WEBHOOK_SECRET
+        secret_token=WEBHOOK_SECRET,
+        drop_pending_updates=True
     )
 
-def main():
-    """Точка входа"""
-    import asyncio
-    
-    try:
-        # Используем asyncio.run() для корректного управления event loop
-        asyncio.run(run_webhook())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.critical(f"Bot crashed: {e}", exc_info=True)
-        raise
-
 if __name__ == "__main__":
-    main()
+    run_bot()
