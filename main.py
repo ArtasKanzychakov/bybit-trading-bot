@@ -11,6 +11,19 @@ from dotenv import load_dotenv
 from trade_engine import TradeEngine
 from db import get_user_settings, update_user_settings, get_open_trades, get_trade_history
 
+import subprocess
+
+def test_connection():
+    try:
+        result = subprocess.check_output(["curl", "https://api.telegram.org"])
+        print("CURL Output:\n", result.decode())
+    except Exception as e:
+        print("CURL Error:", e)
+
+# Вызовем тест перед запуском бота
+test_connection()
+
+
 # Настройка логирования
 def setup_logging():
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
