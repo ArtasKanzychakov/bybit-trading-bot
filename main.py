@@ -10,7 +10,22 @@ from telegram.ext import (
 from dotenv import load_dotenv
 from trade_engine import TradeEngine
 from db import get_user_settings, update_user_settings, get_open_trades, get_trade_history
+# Добавьте этот маршрут в начале main()
+from telegram.ext import TypeHandler
 
+async def webhook_handler(update: Update, context: CallbackContext):
+    logger.info(f"Received update via webhook: {update.update_id}")
+
+if WEBHOOK_URL and WEBHOOK_SECRET:
+    app.add_handler(TypeHandler(Update, webhook_handler))  # Базовый обработчик
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/{WEBHOOK_SECRET}",
+        secret_token=WEBHOOK_SECRET,
+        drop_pending_updates=True
+    )
+    
 # Настройка логирования
 def setup_logging():
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
